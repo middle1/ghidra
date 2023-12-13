@@ -12,9 +12,9 @@ jobs:
           java-version: 11
           cache: gradle
       - name: install Dependencies
-        run: gradle -I gradle/support/fetchDependencies.gradle init
+        run: gradle -I gradle/support/fetchDependencies.gradle init --stacktrace
       - name: Build Ghydra
-        run: gradle buildGhidra
+        run: gradle buildGhidra  --stacktrace
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v3
         with:
