@@ -9,8 +9,10 @@ jobs:
       - uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: 11
+          java-version: 17
           cache: gradle
+      - name: show gradle version
+        run: gradle --version
       - name: install Dependencies
         run: gradle -I gradle/support/fetchDependencies.gradle init --stacktrace
       - name: Build Ghydra
@@ -20,3 +22,5 @@ jobs:
         with:
           name: Module
           path: build/dist/
+
+ 
