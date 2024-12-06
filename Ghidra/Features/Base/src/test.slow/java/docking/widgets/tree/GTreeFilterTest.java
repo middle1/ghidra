@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -43,8 +43,9 @@ public class GTreeFilterTest extends AbstractDockingTest {
 
 		filterField = (FilterTextField) gTree.getFilterField();
 
-		winMgr = new DockingWindowManager(new DummyTool(), null);
-		winMgr.addComponent(new TestTreeComponentProvider(gTree));
+		DummyTool tool = new DummyTool();
+		winMgr = new DockingWindowManager(tool, null);
+		winMgr.addComponent(new TestTreeComponentProvider(tool, gTree));
 		winMgr.setVisible(true);
 
 		waitForTree();
@@ -62,8 +63,7 @@ public class GTreeFilterTest extends AbstractDockingTest {
 		assertEquals(5, viewRoot().getChildCount());
 
 		setFilterText("ABC");
-		assertEquals("Expected 4 of nodes to be in filtered tree!", 4,
-			viewRoot().getChildCount());
+		assertEquals("Expected 4 of nodes to be in filtered tree!", 4, viewRoot().getChildCount());
 
 		checkContainsNode("ABC");
 		checkContainsNode("XABC");
@@ -441,13 +441,13 @@ public class GTreeFilterTest extends AbstractDockingTest {
 		assertEquals(1, viewRoot().getChildCount());
 
 		Object originalValue = getInstanceField("uniquePreferenceKey", gTree);
-		setInstanceField("preferenceKey", gTree.getFilterProvider(), "XYZ");
+		setInstanceField("uniquePreferenceKey", gTree, "XYZ");
 		setFilterOptions(TextFilterStrategy.STARTS_WITH, false);
 		checkContainsNode("ABC");
 		checkContainsNode("ABCX");
 		assertEquals(2, viewRoot().getChildCount());
 
-		setInstanceField("preferenceKey", gTree.getFilterProvider(), originalValue);
+		setInstanceField("uniquePreferenceKey", gTree, originalValue);
 		setInstanceField("optionsSet", gTree.getFilterProvider(), false);
 		restorePreferences();
 		checkContainsNode("ABC");
@@ -588,11 +588,11 @@ public class GTreeFilterTest extends AbstractDockingTest {
 
 	private void setFilterOnPath(boolean usePath) {
 		runSwing(() -> {
-			FilterOptions filterOptions = new FilterOptions(TextFilterStrategy.CONTAINS,
-				true, false, false, usePath, false, FilterOptions.DEFAULT_DELIMITER,
-				MultitermEvaluationMode.AND);
-			((DefaultGTreeFilterProvider) gTree.getFilterProvider()).setFilterOptions(
-				filterOptions);
+			FilterOptions filterOptions =
+				new FilterOptions(TextFilterStrategy.CONTAINS, true, false, false, usePath, false,
+					FilterOptions.DEFAULT_DELIMITER, MultitermEvaluationMode.AND);
+			((DefaultGTreeFilterProvider) gTree.getFilterProvider())
+					.setFilterOptions(filterOptions);
 		});
 		waitForTree();
 	}
@@ -600,9 +600,8 @@ public class GTreeFilterTest extends AbstractDockingTest {
 	private void restorePreferences() {
 		runSwing(() -> {
 			GTreeFilterProvider filterProvider = gTree.getFilterProvider();
-			String key = (String) getInstanceField("uniquePreferenceKey", gTree);
-			Class<?>[] classes = new Class[] { DockingWindowManager.class, String.class };
-			Object[] objs = new Object[] { winMgr, key };
+			Class<?>[] classes = new Class[] { DockingWindowManager.class };
+			Object[] objs = new Object[] { winMgr };
 			invokeInstanceMethod("loadFilterPreference", filterProvider, classes, objs);
 		});
 		waitForTree();
@@ -639,8 +638,8 @@ public class GTreeFilterTest extends AbstractDockingTest {
 
 		runSwing(() -> {
 			FilterOptions filterOptions = new FilterOptions(filterStrategy, false, false, inverted);
-			((DefaultGTreeFilterProvider) gTree.getFilterProvider()).setFilterOptions(
-				filterOptions);
+			((DefaultGTreeFilterProvider) gTree.getFilterProvider())
+					.setFilterOptions(filterOptions);
 		});
 		waitForTree();
 	}
@@ -650,8 +649,8 @@ public class GTreeFilterTest extends AbstractDockingTest {
 		runSwing(() -> {
 			FilterOptions filterOptions = new FilterOptions(filterStrategy, false, false, inverted,
 				false, multiTerm, splitCharacter, evalMode);
-			((DefaultGTreeFilterProvider) gTree.getFilterProvider()).setFilterOptions(
-				filterOptions);
+			((DefaultGTreeFilterProvider) gTree.getFilterProvider())
+					.setFilterOptions(filterOptions);
 		});
 		waitForTree();
 	}

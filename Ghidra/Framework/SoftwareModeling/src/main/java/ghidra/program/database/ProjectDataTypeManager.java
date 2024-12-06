@@ -20,9 +20,10 @@ import java.util.*;
 
 import javax.help.UnsupportedOperationException;
 
-import db.*;
+import db.DBHandle;
+import db.Transaction;
 import db.util.ErrorHandler;
-import generic.stl.Pair;
+import ghidra.framework.data.OpenMode;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.store.LockException;
 import ghidra.program.model.data.*;
@@ -65,7 +66,7 @@ public class ProjectDataTypeManager extends StandAloneDataTypeManager
 	 * @throws VersionException if the database does not match the expected version.
 	 * @throws IOException if a database I/O error occurs.
 	 */
-	ProjectDataTypeManager(DataTypeArchiveDB dataTypeArchive, DBHandle handle, int openMode,
+	ProjectDataTypeManager(DataTypeArchiveDB dataTypeArchive, DBHandle handle, OpenMode openMode,
 			ErrorHandler errHandler, Lock lock, TaskMonitor monitor)
 			throws CancelledException, VersionException, IOException {
 		super(handle, openMode, errHandler, lock, monitor);
@@ -195,6 +196,11 @@ public class ProjectDataTypeManager extends StandAloneDataTypeManager
 	}
 
 	@Override
+	protected void initTransactionState() {
+		// do nothing - rely on DataTypeArchiveDB
+	}
+
+	@Override
 	public Transaction openTransaction(String description) throws IllegalStateException {
 		return dataTypeArchive.openTransaction(description);
 	}
@@ -206,14 +212,75 @@ public class ProjectDataTypeManager extends StandAloneDataTypeManager
 	}
 
 	@Override
-	public void flushEvents() {
-		dataTypeArchive.flushEvents();
+	public void endTransaction(int transactionID, boolean commit) {
+		dataTypeArchive.endTransaction(transactionID, commit);
+	}
+
+	@Override
+	public void undo() {
+		try {
+			dataTypeArchive.undo();
+		}
+		catch (IOException e) {
+			dbError(e);
+		}
+	}
+
+	@Override
+	public void redo() {
+		try {
+			dataTypeArchive.redo();
+		}
+		catch (IOException e) {
+			dbError(e);
+		}
 	}
 
 	@SuppressWarnings("sync-override")
 	@Override
-	public void endTransaction(int transactionID, boolean commit) {
-		dataTypeArchive.endTransaction(transactionID, commit);
+	public void clearUndo() {
+		dataTypeArchive.clearUndo();
+	}
+
+	@SuppressWarnings("sync-override")
+	@Override
+	public boolean canRedo() {
+		return dataTypeArchive.canRedo();
+	}
+
+	@SuppressWarnings("sync-override")
+	@Override
+	public boolean canUndo() {
+		return dataTypeArchive.canUndo();
+	}
+
+	@SuppressWarnings("sync-override")
+	@Override
+	public String getRedoName() {
+		return dataTypeArchive.getRedoName();
+	}
+
+	@SuppressWarnings("sync-override")
+	@Override
+	public String getUndoName() {
+		return dataTypeArchive.getUndoName();
+	}
+
+	@SuppressWarnings("sync-override")
+	@Override
+	public List<String> getAllUndoNames() {
+		return dataTypeArchive.getAllUndoNames();
+	}
+
+	@SuppressWarnings("sync-override")
+	@Override
+	public List<String> getAllRedoNames() {
+		return dataTypeArchive.getAllRedoNames();
+	}
+
+	@Override
+	public void flushEvents() {
+		dataTypeArchive.flushEvents();
 	}
 
 	@Override
@@ -238,9 +305,9 @@ public class ProjectDataTypeManager extends StandAloneDataTypeManager
 		return ArchiveType.PROJECT;
 	}
 
-	public void archiveReady(int openMode, TaskMonitor monitor)
+	public void archiveReady(OpenMode openMode, TaskMonitor monitor)
 			throws IOException, CancelledException {
-		if (openMode == DBConstants.UPGRADE) {
+		if (openMode == OpenMode.UPGRADE) {
 			doSourceArchiveUpdates(monitor);
 			migrateOldFlexArrayComponentsIfRequired(monitor);
 		}

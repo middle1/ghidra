@@ -1,17 +1,17 @@
 ## ###
-#  IP: GHIDRA
-# 
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#  
-#       http://www.apache.org/licenses/LICENSE-2.0
-#  
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# IP: GHIDRA
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 ##
 import code
 from contextlib import contextmanager
@@ -22,35 +22,37 @@ import socket
 import sys
 import time
 
+from comtypes import c_ulong
+from ghidratrace import sch
+from ghidratrace.client import Client, Address, AddressRange, TraceObject
 from pybag import pydbg, userdbg, kerneldbg
 from pybag.dbgeng import core as DbgEng
 from pybag.dbgeng import exception
-
-from ghidratrace import sch
-from ghidratrace.client import Client, Address, AddressRange, TraceObject
+from pybag.dbgeng.win32.kernel32 import STILL_ACTIVE
 
 from . import util, arch, methods, hooks
-
+from .dbgmodel.imodelobject import ModelObjectKind
 
 PAGE_SIZE = 4096
 
 AVAILABLES_PATH = 'Available'
 AVAILABLE_KEY_PATTERN = '[{pid}]'
 AVAILABLE_PATTERN = AVAILABLES_PATH + AVAILABLE_KEY_PATTERN
-PROCESSES_PATH = 'Processes'
+PROCESSES_PATH = 'Sessions[0].Processes'
 PROCESS_KEY_PATTERN = '[{procnum}]'
 PROCESS_PATTERN = PROCESSES_PATH + PROCESS_KEY_PATTERN
-PROC_BREAKS_PATTERN = PROCESS_PATTERN + '.Breakpoints'
+PROC_BREAKS_PATTERN = PROCESS_PATTERN + '.Debug.Breakpoints'
 PROC_BREAK_KEY_PATTERN = '[{breaknum}]'
 PROC_BREAK_PATTERN = PROC_BREAKS_PATTERN + PROC_BREAK_KEY_PATTERN
 ENV_PATTERN = PROCESS_PATTERN + '.Environment'
 THREADS_PATTERN = PROCESS_PATTERN + '.Threads'
 THREAD_KEY_PATTERN = '[{tnum}]'
 THREAD_PATTERN = THREADS_PATTERN + THREAD_KEY_PATTERN
-STACK_PATTERN = THREAD_PATTERN + '.Stack'
+STACK_PATTERN = THREAD_PATTERN + '.Stack.Frames'
 FRAME_KEY_PATTERN = '[{level}]'
 FRAME_PATTERN = STACK_PATTERN + FRAME_KEY_PATTERN
 REGS_PATTERN = THREAD_PATTERN + '.Registers'
+USER_REGS_PATTERN = THREAD_PATTERN + '.Registers.User'
 MEMORY_PATTERN = PROCESS_PATTERN + '.Memory'
 REGION_KEY_PATTERN = '[{start:08x}]'
 REGION_PATTERN = MEMORY_PATTERN + REGION_KEY_PATTERN
@@ -60,15 +62,17 @@ MODULE_PATTERN = MODULES_PATTERN + MODULE_KEY_PATTERN
 SECTIONS_ADD_PATTERN = '.Sections'
 SECTION_KEY_PATTERN = '[{secname}]'
 SECTION_ADD_PATTERN = SECTIONS_ADD_PATTERN + SECTION_KEY_PATTERN
+GENERIC_KEY_PATTERN = '[{key}]'
 
 # TODO: Symbols
 
 
 class ErrorWithCode(Exception):
+
     def __init__(self, code):
         self.code = code
 
-    def __str__(self)->str:
+    def __str__(self) -> str:
         return repr(self.code)
 
 
@@ -208,9 +212,13 @@ def start_trace(name):
     schema_fn = os.path.join(parent, 'schema.xml')
     with open(schema_fn, 'r') as schema_file:
         schema_xml = schema_file.read()
+    using_dbgmodel = os.getenv('OPT_USE_DBGMODEL') == "true"
+    variant = " (dbgmodel)" if using_dbgmodel else " (dbgeng)"
     with STATE.trace.open_tx("Create Root Object"):
-        root = STATE.trace.create_root_object(schema_xml, 'Session')
-        root.set_value('_display', util.DBG_VERSION.full + ' via pybag')
+        root = STATE.trace.create_root_object(schema_xml, 'DbgRoot')
+        root.set_value('_display', util.DBG_VERSION.full + ' via pybag' + variant)
+        if util.dbg.use_generics:
+            put_generic(root)
     util.set_convenience_variable('_ghidra_tracing', "true")
 
 
@@ -252,9 +260,86 @@ def ghidra_trace_create(command=None, initial_break=True, timeout=DbgEng.WAIT_IN
         dbg._client.CreateProcess(command, DbgEng.DEBUG_PROCESS)
         if initial_break:
             dbg._control.AddEngineOptions(DbgEng.DEBUG_ENGINITIAL_BREAK)
-        dbg.wait(timeout)
     if start_trace:
         ghidra_trace_start(command)
+
+
+@util.dbg.eng_thread
+def ghidra_trace_create_ext(command=None, initialDirectory='.', envVariables="\0\0", create_flags=1, create_flags_eng=0, verifier_flags=0, initial_break=True, timeout=DbgEng.WAIT_INFINITE, start_trace=True):
+    """
+    Create a session.
+    """
+
+    dbg = util.dbg._base
+    if command != None:
+        if create_flags == "":
+            create_flags = 1
+        if create_flags_eng == "":
+            create_flags_eng = 0
+        if verifier_flags == "":
+            verifier_flags = 0
+        options = DbgEng._DEBUG_CREATE_PROCESS_OPTIONS()
+        options.CreateFlags = c_ulong(int(create_flags))
+        options.EngCreateFlags = c_ulong(int(create_flags_eng))
+        options.VerifierFlags = c_ulong(int(verifier_flags))
+        options.Reserved = c_ulong(int(0))
+        if initialDirectory == "":
+            initialDirectory = None
+        if envVariables == "":
+            envVariables = None
+        if envVariables is not None and envVariables.endswith("/0/0") is False:
+            envVariables += "/0/0"
+        dbg._client.CreateProcess2(command, options, initialDirectory, envVariables)
+        if initial_break:
+            dbg._control.AddEngineOptions(DbgEng.DEBUG_ENGINITIAL_BREAK)
+    if start_trace:
+        ghidra_trace_start(command)
+
+
+@util.dbg.eng_thread
+def ghidra_trace_attach(pid=None, attach_flags='0', initial_break=True, timeout=DbgEng.WAIT_INFINITE, start_trace=True):
+    """
+    Create a session by attaching.
+    """
+
+    dbg = util.dbg._base
+    if initial_break:
+        dbg._control.AddEngineOptions(DbgEng.DEBUG_ENGINITIAL_BREAK)
+    if attach_flags == None:
+        attach_flags = '0'
+    if pid != None:
+        dbg._client.AttachProcess(int(pid,0), int(attach_flags,0))
+    if start_trace:
+        ghidra_trace_start("pid_"+pid)
+
+
+@util.dbg.eng_thread
+def ghidra_trace_attach_kernel(command=None, initial_break=True, timeout=DbgEng.WAIT_INFINITE, start_trace=True):
+    """
+    Create a session.
+    """
+
+    dbg = util.dbg._base
+    util.set_kernel(True)
+    if initial_break:
+        dbg._control.AddEngineOptions(DbgEng.DEBUG_ENGINITIAL_BREAK)
+    if command != None:
+        dbg._client.AttachKernel(command)
+    if start_trace:
+        ghidra_trace_start(command)
+
+
+@util.dbg.eng_thread
+def ghidra_trace_connect_server(options=None):
+    """
+    Connect to a process server session.
+    """
+
+    dbg = util.dbg._base
+    if options != None:
+        if isinstance(options, str):
+            enc_options = options.encode()
+        dbg._client.ConnectProcessServer(enc_options)
 
 
 @util.dbg.eng_thread
@@ -366,7 +451,7 @@ def ghidra_trace_set_snap(snap=None):
 
 
 def quantize_pages(start, end):
-    return (start // PAGE_SIZE * PAGE_SIZE, (end+PAGE_SIZE-1) // PAGE_SIZE*PAGE_SIZE)
+    return (start // PAGE_SIZE * PAGE_SIZE, (end + PAGE_SIZE - 1) // PAGE_SIZE * PAGE_SIZE)
 
 
 @util.dbg.eng_thread
@@ -449,7 +534,7 @@ def putmem_state(address, length, state, pages=True):
     nproc = util.selected_process()
     base, addr = STATE.trace.memory_mapper.map(nproc, start)
     if base != addr.space and state != 'unknown':
-        trace.create_overlay_space(base, addr.space)
+        STATE.trace.create_overlay_space(base, addr.space)
     STATE.trace.set_memory_state(addr.extend(end - start), state)
 
 
@@ -481,6 +566,18 @@ def ghidra_trace_delmem(address, length):
 
 @util.dbg.eng_thread
 def putreg():
+    if util.dbg.use_generics:
+        nproc = util.selected_process()
+        if nproc < 0:
+            return
+        nthrd = util.selected_thread()
+        rpath = REGS_PATTERN.format(procnum=nproc, tnum=nthrd)
+        create_generic(rpath)
+        STATE.trace.create_overlay_space('register', rpath)
+        path = USER_REGS_PATTERN.format(procnum=nproc, tnum=nthrd)
+        (values, keys) = create_generic(path)
+        return {'missing': STATE.trace.put_registers(rpath, values)}
+
     nproc = util.selected_process()
     if nproc < 0:
         return
@@ -494,8 +591,8 @@ def putreg():
     regs = util.dbg._base.reg
     for i in range(0, len(regs)):
         name = regs._reg.GetDescription(i)[0]
-        value = regs._get_register_by_index(i)
         try:
+            value = regs._get_register_by_index(i)
             values.append(mapper.map_value(nproc, name, value))
             robj.set_value(name, hex(value))
         except Exception:
@@ -702,6 +799,7 @@ def ghidra_trace_get_obj(path):
 
 
 class TableColumn(object):
+
     def __init__(self, head):
         self.head = head
         self.contents = [head]
@@ -719,6 +817,7 @@ class TableColumn(object):
 
 
 class Tabular(object):
+
     def __init__(self, heads):
         self.columns = [TableColumn(h) for h in heads]
         self.columns[-1].is_last = True
@@ -825,6 +924,9 @@ def ghidra_trace_disassemble(address):
 
 @util.dbg.eng_thread
 def compute_proc_state(nproc=None):
+    exit_code = util.GetExitCode()
+    if exit_code is not None and exit_code != STILL_ACTIVE:
+        return 'TERMINATED'
     status = util.dbg._base._control.GetExecutionStatus()
     if status == DbgEng.DEBUG_STATUS_BREAK:
         return 'STOPPED'
@@ -834,6 +936,17 @@ def compute_proc_state(nproc=None):
 def put_processes(running=False):
     # | always displays PID in hex
     # TODO: I'm not sure about the engine id
+
+    # NB: This speeds things up, but desirable?
+    if running:
+        return
+
+    if util.dbg.use_generics and not running:
+        ppath = PROCESSES_PATH
+        (values, keys) = create_generic(ppath)
+        STATE.trace.proxy_object_path(PROCESSES_PATH).retain_values(keys)
+        return
+
     keys = []
     # Set running=True to avoid process changes, even while stopped
     for i, p in enumerate(util.process_list(running=True)):
@@ -842,9 +955,9 @@ def put_processes(running=False):
         procobj = STATE.trace.create_object(ipath)
 
         istate = compute_proc_state(i)
-        procobj.set_value('_state', istate)
+        procobj.set_value('State', istate)
         pid = p[0]
-        procobj.set_value('_pid', pid)
+        procobj.set_value('PID', pid)
         procobj.set_value('_display', '{:x} {:x}'.format(i, pid))
         if len(p) > 1:
             procobj.set_value('Name', str(p[1]))
@@ -857,13 +970,13 @@ def put_state(event_process):
     ipath = PROCESS_PATTERN.format(procnum=event_process)
     procobj = STATE.trace.create_object(ipath)
     state = compute_proc_state(event_process)
-    procobj.set_value('_state', state)
+    procobj.set_value('State', state)
     procobj.insert()
     tnum = util.selected_thread()
     if tnum is not None:
         ipath = THREAD_PATTERN.format(procnum=event_process, tnum=tnum)
         threadobj = STATE.trace.create_object(ipath)
-        threadobj.set_value('_state', state)
+        threadobj.set_value('State', state)
         threadobj.insert()
 
 
@@ -895,9 +1008,9 @@ def put_available():
         ppath = AVAILABLE_PATTERN.format(pid=id)
         procobj = STATE.trace.create_object(ppath)
         keys.append(AVAILABLE_KEY_PATTERN.format(pid=id))
-        pidstr = ('0x{:x}' if radix ==
+        pidstr = ('0x{:x}' if radix == 
                   16 else '0{:o}' if radix == 8 else '{}').format(id)
-        procobj.set_value('_pid', id)
+        procobj.set_value('PID', id)
         procobj.set_value('Name', name)
         procobj.set_value('_display', '{} {}'.format(pidstr, name))
         procobj.insert()
@@ -948,22 +1061,22 @@ def put_single_breakpoint(bp, ibobj, nproc, ikeys):
         base, addr = mapper.map(nproc, address)
         if base != addr.space:
             STATE.trace.create_overlay_space(base, addr.space)
-        brkobj.set_value('_range', addr.extend(1))
+        brkobj.set_value('Range', addr.extend(1))
     elif expr is not None:  # Implies watchpoint
         try:
             address = int(util.parse_and_eval('&({})'.format(expr)))
             base, addr = mapper.map(inf, address)
             if base != addr.space:
                 STATE.trace.create_overlay_space(base, addr.space)
-            brkobj.set_value('_range', addr.extend(width))
+            brkobj.set_value('Range', addr.extend(width))
         except Exception as e:
             print("Error: Could not get range for breakpoint: {}".format(e))
         else:  # I guess it's a catchpoint
             pass
 
-    brkobj.set_value('_expression', expr)
-    brkobj.set_value('_range', addr.extend(1))
-    brkobj.set_value('_kinds', prot)
+    brkobj.set_value('Expression', expr)
+    brkobj.set_value('Range', addr.extend(1))
+    brkobj.set_value('Kinds', prot)
     brkobj.set_value('Pass Count', bp.GetPassCount())
     brkobj.set_value('Current Pass Count', bp.GetCurrentPassCount())
     brkobj.set_value('Enabled', status)
@@ -979,8 +1092,18 @@ def put_single_breakpoint(bp, ibobj, nproc, ikeys):
 
 @util.dbg.eng_thread
 def put_breakpoints():
-    target = util.get_target()
     nproc = util.selected_process()
+
+    # NB: Am leaving this code here in case we change our minds, but the cost
+    #  of using put_generic here outweighs the advantage of uniformity
+    #
+    # if util.dbg.use_generics:
+    #    path = PROC_BREAKS_PATTERN.format(procnum=nproc)
+    #    (values, keys) = create_generic(path)
+    #    STATE.trace.proxy_object_path(path).retain_values(keys)
+    #    return
+
+    target = util.get_target()
     ibpath = PROC_BREAKS_PATTERN.format(procnum=nproc)
     ibobj = STATE.trace.create_object(ibpath)
     keys = []
@@ -1010,12 +1133,13 @@ def ghidra_trace_put_breakpoints():
 
 
 def put_environment():
-    epath = ENV_PATTERN.format(procnum=util.selected_process())
+    nproc = util.selected_process()
+    epath = ENV_PATTERN.format(procnum=nproc)
     envobj = STATE.trace.create_object(epath)
-    envobj.set_value('_debugger', 'pydbg')
-    envobj.set_value('_arch', arch.get_arch())
-    envobj.set_value('_os', arch.get_osabi())
-    envobj.set_value('_endian', arch.get_endian())
+    envobj.set_value('Debugger', 'pydbg')
+    envobj.set_value('Arch', arch.get_arch())
+    envobj.set_value('OS', arch.get_osabi())
+    envobj.set_value('Endian', arch.get_endian())
     envobj.insert()
 
 
@@ -1036,8 +1160,9 @@ def put_regions():
         regions = util.dbg._base.memory_list()
     except Exception:
         regions = []
-    if len(regions) == 0 and util.selected_thread() != None:
-        regions = [util.REGION_INFO_READER.full_mem()]
+    if len(regions) == 0:
+        regions = util.full_mem()
+
     mapper = STATE.trace.memory_mapper
     keys = []
     # r : MEMORY_BASIC_INFORMATION64
@@ -1045,22 +1170,19 @@ def put_regions():
         rpath = REGION_PATTERN.format(procnum=nproc, start=r.BaseAddress)
         keys.append(REGION_KEY_PATTERN.format(start=r.BaseAddress))
         regobj = STATE.trace.create_object(rpath)
-        start_base, start_addr = mapper.map(nproc, r.BaseAddress)
-        if start_base != start_addr.space:
-            STATE.trace.create_overlay_space(start_base, start_addr.space)
-        regobj.set_value('_range', start_addr.extend(r.RegionSize))
-        regobj.set_value('_readable', r.Protect ==
+        (start_base, start_addr) = map_address(r.BaseAddress)
+        regobj.set_value('Range', start_addr.extend(r.RegionSize))
+        regobj.set_value('_readable', r.Protect == 
                          None or r.Protect & 0x66 != 0)
-        regobj.set_value('_writable', r.Protect ==
+        regobj.set_value('_writable', r.Protect == 
                          None or r.Protect & 0xCC != 0)
-        regobj.set_value('_executable', r.Protect ==
+        regobj.set_value('_executable', r.Protect == 
                          None or r.Protect & 0xF0 != 0)
-        regobj.set_value('_offset', hex(r.BaseAddress))
-        regobj.set_value('Base', hex(r.BaseAddress))
-        regobj.set_value('Size', hex(r.RegionSize))
         regobj.set_value('AllocationBase', hex(r.AllocationBase))
         regobj.set_value('Protect', hex(r.Protect))
         regobj.set_value('Type', hex(r.Type))
+        if hasattr(r, 'Name') and  r.Name is not None:
+            regobj.set_value('_display', r.Name)
         regobj.insert()
     STATE.trace.proxy_object_path(
         MEMORY_PATTERN.format(procnum=nproc)).retain_values(keys)
@@ -1078,8 +1200,15 @@ def ghidra_trace_put_regions():
 
 @util.dbg.eng_thread
 def put_modules():
-    target = util.get_target()
     nproc = util.selected_process()
+    if util.dbg.use_generics:
+        mpath = MODULES_PATTERN.format(procnum=nproc)
+        (values, keys) = create_generic(mpath)
+        STATE.trace.proxy_object_path(
+            MODULES_PATTERN.format(procnum=nproc)).retain_values(keys)
+        return
+
+    target = util.get_target()
     modules = util.dbg._base.module_list()
     mapper = STATE.trace.memory_mapper
     mod_keys = []
@@ -1093,14 +1222,11 @@ def put_modules():
         mpath = MODULE_PATTERN.format(procnum=nproc, modpath=hbase)
         modobj = STATE.trace.create_object(mpath)
         mod_keys.append(MODULE_KEY_PATTERN.format(modpath=hbase))
-        modobj.set_value('_module_name', name)
         base_base, base_addr = mapper.map(nproc, base)
         if base_base != base_addr.space:
             STATE.trace.create_overlay_space(base_base, base_addr.space)
-        modobj.set_value('_range', base_addr.extend(size))
+        modobj.set_value('Range', base_addr.extend(size))
         modobj.set_value('Name', name)
-        modobj.set_value('Base', hbase)
-        modobj.set_value('Size', hex(size))
         modobj.set_value('Flags', hex(size))
         modobj.insert()
 
@@ -1141,9 +1267,21 @@ def compute_thread_display(i, pid, tid, t):
 def put_threads(running=False):
     # ~ always displays PID:TID in hex
     # TODO: I'm not sure about the engine id
+
+    # NB: This speeds things up, but desirable?
+    if running:
+        return
+
     nproc = util.selected_process()
     if nproc is None:
         return
+    if util.dbg.use_generics and not running:
+        tpath = THREADS_PATTERN.format(procnum=nproc)
+        (values, keys) = create_generic(tpath)
+        STATE.trace.proxy_object_path(
+            THREADS_PATTERN.format(procnum=nproc)).retain_values(keys)
+        return
+
     pid = util.dbg.pid
 
     keys = []
@@ -1154,7 +1292,7 @@ def put_threads(running=False):
         keys.append(THREAD_KEY_PATTERN.format(tnum=i))
 
         tid = t[0]
-        tobj.set_value('_tid', tid)
+        tobj.set_value('TID', tid)
         tobj.set_value('_short_display',
                        '{:x} {:x}:{:x}'.format(i, pid, tid))
         tobj.set_value('_display', compute_thread_display(i, pid, tid, t))
@@ -1192,10 +1330,19 @@ def ghidra_trace_put_threads():
 @util.dbg.eng_thread
 def put_frames():
     nproc = util.selected_process()
-    mapper = STATE.trace.memory_mapper
+    if nproc < 0:
+        return
     nthrd = util.selected_thread()
     if nthrd is None:
         return
+
+    if util.dbg.use_generics:
+        path = STACK_PATTERN.format(procnum=nproc, tnum=nthrd)
+        (values, keys) = create_generic(path)
+        STATE.trace.proxy_object_path(path).retain_values(keys)
+        return
+
+    mapper = STATE.trace.memory_mapper
     keys = []
     # f : _DEBUG_STACK_FRAME
     for f in util.dbg._base.backtrace_list():
@@ -1203,16 +1350,24 @@ def put_frames():
             procnum=nproc, tnum=nthrd, level=f.FrameNumber)
         fobj = STATE.trace.create_object(fpath)
         keys.append(FRAME_KEY_PATTERN.format(level=f.FrameNumber))
-        base, pc = mapper.map(nproc, f.InstructionOffset)
-        if base != pc.space:
-            STATE.trace.create_overlay_space(base, pc.space)
-        fobj.set_value('_pc', pc)
-        fobj.set_value('InstructionOffset', hex(f.InstructionOffset))
-        fobj.set_value('StackOffset', hex(f.StackOffset))
-        fobj.set_value('ReturnOffset', hex(f.ReturnOffset))
-        fobj.set_value('FrameOffset', hex(f.FrameOffset))
+        base, offset_inst = mapper.map(nproc, f.InstructionOffset)
+        if base != offset_inst.space:
+            STATE.trace.create_overlay_space(base, offset_inst.space)
+        base, offset_stack = mapper.map(nproc, f.StackOffset)
+        if base != offset_stack.space:
+            STATE.trace.create_overlay_space(base, offset_stack.space)
+        base, offset_ret = mapper.map(nproc, f.ReturnOffset)
+        if base != offset_ret.space:
+            STATE.trace.create_overlay_space(base, offset_ret.space)
+        base, offset_frame = mapper.map(nproc, f.FrameOffset)
+        if base != offset_frame.space:
+            STATE.trace.create_overlay_space(base, offset_frame.space)
+        fobj.set_value('Instruction Offset', offset_inst)
+        fobj.set_value('Stack Offset', offset_stack)
+        fobj.set_value('Return Offset', offset_ret)
+        fobj.set_value('Frame Offset', offset_frame)
         fobj.set_value('_display', "#{} {}".format(
-            f.FrameNumber, hex(f.InstructionOffset)))
+            f.FrameNumber, offset_inst.offset))
         fobj.insert()
     STATE.trace.proxy_object_path(STACK_PATTERN.format(
         procnum=nproc, tnum=nthrd)).retain_values(keys)
@@ -1226,6 +1381,164 @@ def ghidra_trace_put_frames():
     STATE.require_tx()
     with STATE.client.batch() as b:
         put_frames()
+
+
+def update_by_container(np, keyval, obj):
+    index = keyval[0]
+    key = ''
+    if np.endswith("Processes") or np.endswith("Threads"):
+        istate = compute_proc_state(index)
+        obj.set_value('State', istate)
+    if np.endswith("Sessions"):
+        key = '[{:x}]'.format(index)
+    if np.endswith("Processes"):
+        create_generic(obj.path)
+        obj.set_value('PID', index)
+        create_generic(obj.path + ".Memory")
+        if util.is_kernel():
+            key = '[{:x}]'.format(index)
+        else:
+            id = util.get_proc_id(index)
+            key = '{:x} [{:x}]'.format(id, index)
+    if np.endswith("Breakpoints"):
+        create_generic(obj.path)
+    if np.endswith("Threads"):
+        create_generic(obj.path)
+        obj.set_value('TID', index)
+        if util.is_kernel():
+            key = '[{:x}]'.format(index)
+        else:
+            id = util.get_thread_id(index)
+            key = '{:x} [{:x}]'.format(id, index)
+    if np.endswith("Frames"):
+        mo = util.get_object(obj.path)
+        map = util.get_attributes(mo)
+        if 'Attributes' in map:
+            attr = map["Attributes"]
+            if attr is not None:
+                map = util.get_attributes(attr)        
+                pc = util.get_value(map["InstructionOffset"])
+                (pc_base, pc_addr) = map_address(pc)
+                obj.set_value('Instruction Offset', pc_addr)
+                key = '#{:x} 0x{:x}'.format(index, pc)
+    if np.endswith("Modules"):
+        create_generic(obj.path)
+        mo = util.get_object(obj.path)
+        map = util.get_attributes(mo)
+        base = util.get_value(map["BaseAddress"])
+        size = util.get_value(map["Size"])
+        name = util.get_value(map["Name"])
+        obj.set_value('Name', '{}'.format(name))
+        (base_base, base_addr) = map_address(base)
+        obj.set_value('Range', base_addr.extend(size))
+        key = '{:x} {:x} {}'.format(index, base, name)
+    disp = util.to_display_string(keyval[1])
+    if disp is not None:
+        key += " " + disp
+    if key is not None and key != "":
+        obj.set_value('_display', key)
+
+
+def create_generic(path):
+    obj = STATE.trace.create_object(path)
+    obj.insert()
+    result = put_generic(obj)
+    return result
+
+
+def put_generic(node):
+    # print(f"put_generic: {node}")
+    nproc = util.selected_process()
+    if nproc is None:
+        return
+    nthrd = util.selected_thread()
+
+    mo = util.get_object(node.path)
+    mapper = STATE.trace.register_mapper
+    
+    attributes = util.get_attributes(mo)
+    # print(f"ATTR={attributes}")
+    values = []
+    if attributes is not None:
+        for key, value in attributes.items():
+            kind = util.get_kind(value)
+            if kind == ModelObjectKind.METHOD.value:
+                continue
+            # print(f"key={key} kind={kind}")
+            if kind != ModelObjectKind.INTRINSIC.value:
+                apath = node.path + '.' + key
+                aobj = STATE.trace.create_object(apath)
+                set_display(key, value, aobj)
+                aobj.insert()
+            else:
+                val = util.get_value(value)
+                try:
+                    if node.path.endswith('.User'):
+                        # print(f"PUT_REG: {key} {val}")
+                        values.append(mapper.map_value(nproc, key, val))
+                        node.set_value(key, hex(val))
+                    elif isinstance(val, int):
+                        (v_base, v_addr) = map_address(val)
+                        node.set_value(key, v_addr, schema="ADDRESS")
+                    else:
+                        node.set_value(key, val)
+                except Exception as e:
+                    print(f"Attribute exception for {key} {type(val)}: {e}")
+    elements = util.get_elements(mo)
+    # print(f"ELEM={elements}")
+    keys = []
+    if elements is not None:
+        for el in elements:
+            index = el[0]
+            key = GENERIC_KEY_PATTERN.format(key=index)
+            lpath = node.path + key
+            lobj = STATE.trace.create_object(lpath)
+            update_by_container(node.path, el, lobj)
+            lobj.insert()
+            keys.append(key)
+        node.retain_values(keys)
+    return (values, keys)
+
+
+def set_display(key, value, obj):
+    kind = util.get_kind(value)
+    vstr = util.get_value(value)
+    # istr = util.get_intrinsic_value(value)
+    if kind == ModelObjectKind.TARGET_OBJECT.value:
+        hloc = util.get_location(value)
+        ti = util.get_type_info(value)
+        if ti is not None:
+            name = util.get_name(ti)
+            if name is not None:
+                key += " : " + name
+                obj.set_value('_display', key)
+        if hloc is not None:
+            key += " @ " + str(hloc)
+            obj.set_value('_display', key)
+            (hloc_base, hloc_addr) = map_address(int(hloc,0))
+            obj.set_value('_address', hloc_addr, schema=Address)
+    if vstr is not None:
+        key += " : " + str(vstr)
+        obj.set_value('_display', key)
+
+
+def map_address(address):
+    nproc = util.selected_process()
+    mapper = STATE.trace.memory_mapper
+    base, addr = mapper.map(nproc, address)
+    if base != addr.space:
+        STATE.trace.create_overlay_space(base, addr.space)
+    return (base, addr)
+
+
+def ghidra_trace_put_generic(node):
+    """
+    Put the current thread's frames into the Ghidra trace
+    """
+
+    STATE.require_tx()
+    with STATE.client.batch() as b:
+        put_generic(node)
 
 
 def ghidra_trace_put_all():

@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,7 +26,8 @@ import org.jdom.Element;
 import docking.actions.KeyBindingUtils;
 import docking.widgets.OptionDialog;
 import docking.widgets.tabbedpane.DockingTabRenderer;
-import ghidra.util.*;
+import ghidra.util.HelpLocation;
+import ghidra.util.Msg;
 import ghidra.util.exception.AssertException;
 import help.HelpService;
 import utilities.util.reflection.ReflectionUtilities;
@@ -76,13 +77,11 @@ class ComponentNode extends Node {
 			String owner = e.getAttributeValue("OWNER");
 			String title = e.getAttributeValue("TITLE");
 			String group = e.getAttributeValue("GROUP");
-			if (group == null || group.trim()
-					.isEmpty()) {
+			if (group == null || group.trim().isEmpty()) {
 				group = ComponentProvider.DEFAULT_WINDOW_GROUP;
 			}
 
-			boolean isActive = Boolean.valueOf(e.getAttributeValue("ACTIVE"))
-					.booleanValue();
+			boolean isActive = Boolean.valueOf(e.getAttributeValue("ACTIVE")).booleanValue();
 
 			long uniqueID = getUniqueID(e, 0);
 
@@ -110,12 +109,9 @@ class ComponentNode extends Node {
 			return;
 		}
 		ComponentPlaceholder placeholder = getPlaceHolderForComponent(component);
-		if (placeholder == null) {
-			return;
+		if (placeholder != null) {
+			placeholder.requestFocusWhenReady();
 		}
-		Swing.runLater(() -> {
-			placeholder.requestFocus();
-		});
 	}
 
 	private boolean containsPlaceholder(ComponentPlaceholder placeholder) {
@@ -131,14 +127,10 @@ class ComponentNode extends Node {
 		String name = placeholder.getName();
 		String title = placeholder.getTitle();
 		for (ComponentPlaceholder existingPlaceholder : windowPlaceholders) {
-			if (existingPlaceholder.getOwner()
-					.equals(owner) &&
-				existingPlaceholder.getName()
-						.equals(name) &&
-				existingPlaceholder.getGroup()
-						.equals(group) &&
-				existingPlaceholder.getTitle()
-						.equals(title)) {
+			if (existingPlaceholder.getOwner().equals(owner) &&
+				existingPlaceholder.getName().equals(name) &&
+				existingPlaceholder.getGroup().equals(group) &&
+				existingPlaceholder.getTitle().equals(title)) {
 				return true;
 			}
 		}
@@ -175,7 +167,7 @@ class ComponentNode extends Node {
 	void add(ComponentPlaceholder placeholder) {
 		windowPlaceholders.add(placeholder);
 		placeholder.setNode(this);
-		if (placeholder.isShowing()) {
+		if (placeholder.isActive()) {
 			top = placeholder;
 			invalidate();
 		}
@@ -193,7 +185,7 @@ class ComponentNode extends Node {
 			return;   // this node has been disconnected.
 		}
 
-		if (placeholder.isShowing()) {
+		if (placeholder.isActive()) {
 			if (top == placeholder) {
 				top = null;
 			}
@@ -220,7 +212,7 @@ class ComponentNode extends Node {
 	 * @param keepEmptyPlaceholder flag indicating to keep a placeholder placeholder object.
 	 */
 	void remove(ComponentPlaceholder placeholder, boolean keepEmptyPlaceholder) {
-		if (placeholder.isShowing()) {
+		if (placeholder.isActive()) {
 			placeholder.show(false);
 			if (top == placeholder) {
 				top = null;
@@ -235,8 +227,12 @@ class ComponentNode extends Node {
 		}
 	}
 
+	@Override
 	int getComponentCount() {
-		return windowPlaceholders.size();
+		// we may be a single component or in a tabbed pane of components
+		List<ComponentPlaceholder> activeComponents = new ArrayList<>();
+		populateActiveComponents(activeComponents);
+		return activeComponents.size();
 	}
 
 	@Override
@@ -245,9 +241,7 @@ class ComponentNode extends Node {
 		Iterator<ComponentPlaceholder> it = list.iterator();
 		while (it.hasNext()) {
 			ComponentPlaceholder placeholder = it.next();
-			if (placeholder.isShowing()) {
-				placeholder.close();
-			}
+			placeholder.close();
 		}
 	}
 
@@ -339,26 +333,28 @@ class ComponentNode extends Node {
 	}
 
 	private void setupFocusUpdateListeners(JTabbedPane tabbedPane) {
-		registerSpacebarActionToTransferFocusToTabbedComponent(tabbedPane);
+		registerActionToTransferFocusToTabbedComponent(tabbedPane);
 		tabbedPane.addMouseListener(new MouseAdapter() {
 			@Override
 			public void mousePressed(MouseEvent e) {
 				int index = tabbedPane.indexAtLocation(e.getX(), e.getY());
-				Component selectedComponent = tabbedPane.getComponentAt(index);
-				focusComponent(selectedComponent);
+				if (index >= 0) {
+					Component selectedComponent = tabbedPane.getComponentAt(index);
+					focusComponent(selectedComponent);
+				}
 			}
 		});
 	}
 
 	/**
-	 * Registers a keybinding that binds VK_SPACE to an action that transfers focus the 
-	 * component represented by the currently focussed tab of a JTabbedPane. This is so that
-	 * when using keyboard focus traversal and the JTabbedPane get focus such that using arrow
-	 * keys allows the user to switch tabs, pressing the spacebar will transfer control to the
-	 * currently focused tab.
-	 * @param tabbedPane the JTabbedPane to add this spacebar keybinding.
+	 * Registers a keybinding that allows the user to press the space bar to transfer focus to the 
+	 * component inside of the current tab of the tabbed pane. When using keyboard navigation, the 
+	 * tabbed pane will place focus on its tabs, not on the components in the tabs.  Adding the 
+	 * space bar trigger makes keyboard navigation easier by giving the user a method to focus the 
+	 * component represented by the tab.
+	 * @param tabbedPane the JTabbedPane 
 	 */
-	private void registerSpacebarActionToTransferFocusToTabbedComponent(JTabbedPane tabbedPane) {
+	private void registerActionToTransferFocusToTabbedComponent(JTabbedPane tabbedPane) {
 		Action focusAction = new AbstractAction("Focus") {
 			@Override
 			public void actionPerformed(ActionEvent ev) {
@@ -406,7 +402,7 @@ class ComponentNode extends Node {
 	@Override
 	void populateActiveComponents(List<ComponentPlaceholder> list) {
 		for (ComponentPlaceholder placeholder : windowPlaceholders) {
-			if (placeholder.isShowing()) {
+			if (placeholder.isActive()) {
 				list.add(placeholder);
 			}
 		}
@@ -510,7 +506,7 @@ class ComponentNode extends Node {
 			elem.setAttribute("NAME", placeholder.getName());
 			elem.setAttribute("OWNER", placeholder.getOwner());
 			elem.setAttribute("TITLE", placeholder.getTitle());
-			elem.setAttribute("ACTIVE", "" + placeholder.isShowing());
+			elem.setAttribute("ACTIVE", "" + placeholder.isActive());
 			elem.setAttribute("GROUP", placeholder.getGroup());
 			elem.setAttribute("INSTANCE_ID", Long.toString(placeholder.getInstanceID()));
 			root.addContent(elem);
@@ -518,13 +514,10 @@ class ComponentNode extends Node {
 		return root;
 	}
 
-	//
-	// Tabbed pane listener methods
-	//
 	@Override
 	boolean contains(ComponentPlaceholder placeholder) {
 		for (ComponentPlaceholder ph : windowPlaceholders) {
-			if (ph.isShowing() && ph.equals(placeholder)) {
+			if (ph.isActive() && ph.equals(placeholder)) {
 				return true;
 			}
 		}
@@ -646,13 +639,13 @@ class ComponentNode extends Node {
 					return; // cancelled
 				}
 
-				// If the user changes the name, then we want to replace all of the
-				// parts of the title with that name.  We skip the subtitle, as that 
-				// doesn't make sense in that case.
-				provider.setTitle(newName);   // title on window
-				provider.setSubTitle("");     // part after the title
-				provider.setTabText(newName); // text on the tab
-				placeholder.update();
+				// If the user changes the name, then we want to replace all of the parts of the 
+				// title with that name.  We do not supply a custom subtitle, as that doesn't make 
+				// sense in this case, but we clear it so the user's title is the only thing 
+				// visible.  This means that providers can still update the subtitle later.
+				provider.setCustomTitle(newName);   // title on window
+				provider.setSubTitle("");           // part after the title
+				provider.setCustomTabText(newName); // text on the tab
 			}
 		}
 	}

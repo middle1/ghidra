@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,8 @@
 package ghidra.program.util;
 
 import java.util.*;
+
+import javax.help.UnsupportedOperationException;
 
 import ghidra.program.database.properties.UnsupportedMapDB;
 import ghidra.program.model.address.*;
@@ -480,10 +482,8 @@ public class ProgramDiff {
 	synchronized public AddressSetView getDifferences(ProgramDiffFilter filter, TaskMonitor monitor)
 			throws CancelledException {
 		cancelled = false;
-		if (monitor == null) {
-			// Create a do nothing task monitor that we can pass along.
-			monitor = TaskMonitor.DUMMY;
-		}
+
+		monitor = TaskMonitor.dummyIfNull(monitor);
 
 		if (!filterChanged && ((filter != null) && (filter.equals(this.pdf)))) {
 			return diffsToReturn;
@@ -496,6 +496,7 @@ public class ProgramDiff {
 		// Create any required address sets.
 		int[] pt = ProgramDiffFilter.getPrimaryTypes();
 		for (int element : pt) {
+
 			// Are we interested in this difference type?
 			if (pdf.getFilter(element)) {
 				Integer key = element;
@@ -2964,6 +2965,30 @@ public class ProgramDiff {
 			// Detect that data type name or path differs?
 			if (!dt1.getPathName().equals(dt2.getPathName())) {
 				return false;
+			}
+
+			// assume only top-level data code units are compared
+			// we should not be a DataComponent (i.e., no parent)
+			if (d1.getParent() != null || d2.getParent() != null) {
+				throw new UnsupportedOperationException("Expecting top-level Data only");
+			}
+
+			// Only top-level Data instance Settings are supported 
+
+			String[] settingNames1 = d1.getNames();
+			Arrays.sort(settingNames1);
+			String[] settingNames2 = d2.getNames();
+			Arrays.sort(settingNames2);
+			if (!Arrays.equals(settingNames1, settingNames2)) {
+				return false;
+			}
+
+			for (int i = 0; i < settingNames1.length; i++) {
+				Object v1 = d1.getValue(settingNames1[i]);
+				Object v2 = d2.getValue(settingNames2[i]);
+				if (!Objects.equals(v1, v2)) {
+					return false;
+				}
 			}
 
 			return true;

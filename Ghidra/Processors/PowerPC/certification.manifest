@@ -1,5 +1,6 @@
 ##VERSION: 2.0
 Module.manifest||GHIDRA||||END|
+README.md||GHIDRA||||END|
 data/languages/4xx.sinc||GHIDRA||||END|
 data/languages/FPRC.sinc||GHIDRA||||END|
 data/languages/PowerPC.opinion||GHIDRA||||END|
@@ -63,5 +64,6 @@ data/languages/vsx.sinc||GHIDRA||||END|
 data/manuals/PowerISA.idx||GHIDRA||||END|
 data/manuals/PowerPC.idx||GHIDRA||||END|
 data/patterns/PPC_BE_patterns.xml||GHIDRA||||END|
+data/patterns/PPC_LE_patterns.xml||GHIDRA||||END|
 data/patterns/patternconstraints.xml||GHIDRA||||END|
 data/ppc64-r2CallStubs.xml||GHIDRA||||END|

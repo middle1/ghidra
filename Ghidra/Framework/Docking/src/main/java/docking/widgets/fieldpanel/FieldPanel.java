@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -42,6 +42,7 @@ import docking.widgets.indexedscrollpane.IndexScrollListener;
 import docking.widgets.indexedscrollpane.IndexedScrollable;
 import generic.theme.GColor;
 import generic.theme.GThemeDefaults.Colors.Messages;
+import generic.theme.Gui;
 import ghidra.util.*;
 
 public class FieldPanel extends JPanel
@@ -127,6 +128,7 @@ public class FieldPanel extends JPanel
 		setFocusable(true);
 
 		hoverHandler = new HoverHandler(this);
+		initializeCursorBlinking();
 	}
 
 	@Override
@@ -393,6 +395,16 @@ public class FieldPanel extends JPanel
 	}
 
 	@Override
+	public void updateUI() {
+		super.updateUI();
+		initializeCursorBlinking();
+	}
+
+	private void initializeCursorBlinking() {
+		setBlinkCursor(Gui.isBlinkingCursors());
+	}
+
+	@Override
 	public Dimension getPreferredSize() {
 		if (viewport == null) {
 			viewport = getViewport();
@@ -423,7 +435,9 @@ public class FieldPanel extends JPanel
 	}
 
 	public void setBlinkCursor(Boolean blinkCursor) {
-		cursorHandler.setBlinkCursor(blinkCursor);
+		if (cursorHandler != null) {
+			cursorHandler.setBlinkCursor(blinkCursor);
+		}
 	}
 
 	public void enableSelection(boolean b) {
@@ -1397,6 +1411,7 @@ public class FieldPanel extends JPanel
 		return accessibleFieldPanel;
 	}
 
+	@Override
 	public void mouseWheelMoved(double preciseWheelRotation, boolean horizontal) {
 
 		Layout firstLayout = model.getLayout(BigInteger.ZERO);
@@ -1920,14 +1935,14 @@ public class FieldPanel extends JPanel
 		}
 
 		/**
-		 * Checks if the the "shift" modifier is on and the "control" modifier is not.
+		 * Checks if the "shift" modifier is on and the "control" modifier is not.
 		 */
 		private boolean isAddToContiguousSelectionActivator(MouseEvent e) {
 			return (e.isShiftDown() && !DockingUtils.isControlModifier(e));
 		}
 
 		/**
-		 * Checks if the the "control" modifier is on and the shift modifier is not.
+		 * Checks if the "control" modifier is on and the "shift" modifier is not.
 		 */
 		private boolean isAddRemoveDisjointSelectionActivator(MouseEvent e) {
 			return DockingUtils.isControlModifier(e) && !e.isShiftDown();
@@ -2195,6 +2210,7 @@ public class FieldPanel extends JPanel
 			// Make sure the position is valid
 			if ((index.compareTo(BigInteger.ZERO) < 0) ||
 				(index.compareTo(model.getNumIndexes()) >= 0)) {
+				notifyCursorChanged(trigger);
 				return false;
 			}
 

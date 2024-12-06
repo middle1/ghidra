@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -243,14 +243,15 @@ public class GdbCommandsTest extends AbstractGdbTraceRmiTest {
 				quit
 				""".formatted(PREAMBLE));
 		assertEquals("""
-				Selected Ghidra language: DATA:LE:64:default
-				Selected Ghidra compiler: pointer64""",
+				Selected Ghidra language: x86:LE:32:default
+				Selected Ghidra compiler: gcc""",
 			extractOutSection(out, "---Import---"));
 		assertEquals("""
 				Selected Ghidra language: x86:LE:64:default
 				Selected Ghidra compiler: gcc""",
 			extractOutSection(out, "---File---"));
 		assertEquals("""
+				Toy:BE:64:default not found in compiler map
 				Selected Ghidra language: Toy:BE:64:default
 				Selected Ghidra compiler: default""",
 			extractOutSection(out, "---Language---"));
@@ -819,7 +820,7 @@ public class GdbCommandsTest extends AbstractGdbTraceRmiTest {
 					.getObjectByCanonicalPath(TraceObjectKeyPath.parse("Test.Objects[1]"));
 			assertNotNull(object);
 			String getObject = extractOutSection(out, "---GetObject---");
-			assertEquals("1\tTest.Objects[1]", getObject);
+			assertEquals("%d\tTest.Objects[1]".formatted(object.getKey()), getObject);
 		}
 	}
 
@@ -1020,7 +1021,7 @@ public class GdbCommandsTest extends AbstractGdbTraceRmiTest {
 				starti
 				ghidra trace start
 				ghidra trace tx-start "Tx"
-				break main
+				break *main
 				hbreak *main+10
 				watch -l *((char*)(&main+20))
 				rwatch -l *((char(*)[8])(&main+30))
@@ -1046,7 +1047,7 @@ public class GdbCommandsTest extends AbstractGdbTraceRmiTest {
 			// NB. starti avoid use of temporary main breakpoint
 			assertBreakLoc(infBreakLocVals.get(0), "[1.1]", main, 1,
 				Set.of(TraceBreakpointKind.SW_EXECUTE),
-				"main");
+				"*main");
 			assertBreakLoc(infBreakLocVals.get(1), "[2.1]", main.add(10), 1,
 				Set.of(TraceBreakpointKind.HW_EXECUTE),
 				"*main+10");

@@ -25,13 +25,11 @@ import org.apache.commons.lang3.ArrayUtils;
 
 import docking.ActionContext;
 import docking.WindowPosition;
-import docking.action.*;
+import docking.action.DockingActionIf;
 import ghidra.app.plugin.core.debug.DebuggerPluginPackage;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources;
-import ghidra.app.plugin.core.debug.gui.DebuggerResources.SynchronizeTargetAction;
-import ghidra.app.plugin.core.debug.gui.DebuggerResources.ToToggleSelectionListener;
-import ghidra.app.services.*;
-import ghidra.app.services.DebuggerTraceManagerService.BooleanChangeAdapter;
+import ghidra.app.services.DebuggerEmulationService;
+import ghidra.app.services.DebuggerTargetService;
 import ghidra.debug.api.tracemgr.DebuggerCoordinates;
 import ghidra.framework.model.DomainObjectChangeRecord;
 import ghidra.framework.model.DomainObjectEvent;
@@ -97,35 +95,21 @@ public class DebuggerThreadsProvider extends ComponentProviderAdapter {
 	final DebuggerThreadsPlugin plugin;
 
 	DebuggerCoordinates current = DebuggerCoordinates.NOWHERE;
-	Trace currentTrace; // Copy for transition
 
 	@AutoServiceConsumed
 	DebuggerTargetService targetService;
-	// @AutoServiceConsumed by method
-	private DebuggerTraceManagerService traceManager;
 	@SuppressWarnings("unused")
 	private final AutoService.Wiring autoServiceWiring;
-
-	private final BooleanChangeAdapter synchronizeTargetChangeListener =
-		this::changedSynchronizeTarget;
 
 	private final ForSnapsListener forSnapsListener = new ForSnapsListener();
 
 	private JPanel mainPanel;
 
-	DebuggerTraceTabPanel traceTabs;
 	JPopupMenu traceTabPopupMenu;
 	DebuggerThreadsPanel panel;
 	DebuggerLegacyThreadsPanel legacyPanel;
 
-	DockingAction actionSaveTrace;
-	// TODO: This should probably be moved to ModelProvider
-	ToggleDockingAction actionSyncTarget;
-
 	ActionContext myActionContext;
-
-	// strong ref
-	ToToggleSelectionListener toToggleSelectionListener;
 
 	public DebuggerThreadsProvider(final DebuggerThreadsPlugin plugin) {
 		super(plugin.getTool(), DebuggerResources.TITLE_PROVIDER_THREADS, plugin.getName());
@@ -148,22 +132,6 @@ public class DebuggerThreadsProvider extends ComponentProviderAdapter {
 	}
 
 	@AutoServiceConsumed
-	public void setTraceManager(DebuggerTraceManagerService traceManager) {
-		if (this.traceManager != null) {
-			this.traceManager
-					.removeSynchronizeActiveChangeListener(synchronizeTargetChangeListener);
-		}
-		this.traceManager = traceManager;
-		if (traceManager != null) {
-			traceManager.addSynchronizeActiveChangeListener(synchronizeTargetChangeListener);
-			if (actionSyncTarget != null) {
-				actionSyncTarget.setSelected(traceManager.isSynchronizeActive());
-			}
-		}
-		contextChanged();
-	}
-
-	@AutoServiceConsumed
 	public void setEmulationService(DebuggerEmulationService emulationService) {
 		contextChanged();
 	}
@@ -176,7 +144,6 @@ public class DebuggerThreadsProvider extends ComponentProviderAdapter {
 
 		current = coordinates;
 
-		traceTabs.coordinatesActivated(coordinates);
 		if (Trace.isLegacy(coordinates.getTrace())) {
 			panel.coordinatesActivated(DebuggerCoordinates.NOWHERE);
 			legacyPanel.coordinatesActivated(coordinates);
@@ -215,10 +182,6 @@ public class DebuggerThreadsProvider extends ComponentProviderAdapter {
 		myActionContext = legacyPanel.getActionContext();
 	}
 
-	void traceTabsContextChanged() {
-		myActionContext = traceTabs.getActionContext();
-	}
-
 	@Override
 	public ActionContext getActionContext(MouseEvent event) {
 		if (myActionContext == null) {
@@ -235,34 +198,9 @@ public class DebuggerThreadsProvider extends ComponentProviderAdapter {
 		panel = new DebuggerThreadsPanel(this);
 		legacyPanel = new DebuggerLegacyThreadsPanel(plugin, this);
 		mainPanel.add(panel);
-
-		traceTabs = new DebuggerTraceTabPanel(this);
-
-		mainPanel.add(traceTabs, BorderLayout.NORTH);
 	}
 
 	protected void createActions() {
-		actionSyncTarget = SynchronizeTargetAction.builder(plugin)
-				.selected(traceManager != null && traceManager.isSynchronizeActive())
-				.enabledWhen(c -> traceManager != null)
-				.onAction(c -> toggleSyncFocus(actionSyncTarget.isSelected()))
-				.buildAndInstallLocal(this);
-		traceManager.addSynchronizeActiveChangeListener(
-			toToggleSelectionListener = new ToToggleSelectionListener(actionSyncTarget));
-	}
-
-	private void changedSynchronizeTarget(boolean value) {
-		if (actionSyncTarget == null || actionSyncTarget.isSelected()) {
-			return;
-		}
-		actionSyncTarget.setSelected(value);
-	}
-
-	private void toggleSyncFocus(boolean enabled) {
-		if (traceManager == null) {
-			return;
-		}
-		traceManager.setSynchronizeActive(enabled);
 	}
 
 	@Override

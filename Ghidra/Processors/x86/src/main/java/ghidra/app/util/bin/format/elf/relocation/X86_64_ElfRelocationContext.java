@@ -31,7 +31,7 @@ import ghidra.util.exception.*;
  * Global Offset Table (GOT) to facilitate GOT related relocations encountered within 
  * object modules.
  */
-class X86_64_ElfRelocationContext extends ElfRelocationContext {
+class X86_64_ElfRelocationContext extends ElfRelocationContext<X86_64_ElfRelocationHandler> {
 
 	private AddressRange allocatedGotLimits;
 	private Address allocatedGotAddress;
@@ -116,16 +116,21 @@ class X86_64_ElfRelocationContext extends ElfRelocationContext {
 
 	private boolean requiresGotEntry(ElfRelocation r) {
 
-		switch (r.getType()) {
-			case X86_64_ElfRelocationConstants.R_X86_64_GOTPCREL:
-//			case X86_64_ElfRelocationConstants.R_X86_64_GOTOFF64:
-//			case X86_64_ElfRelocationConstants.R_X86_64_GOTPC32:
-//			case X86_64_ElfRelocationConstants.R_X86_64_GOT64:
-			case X86_64_ElfRelocationConstants.R_X86_64_GOTPCREL64:
-//			case X86_64_ElfRelocationConstants.R_X86_64_GOTPC64:
+		X86_64_ElfRelocationType type = handler.getRelocationType(r.getType());
+		if (type == null) {
+			return false;
+		}
+
+		switch (type) {
+			case R_X86_64_GOTPCREL:
+//			case R_X86_64_GOTOFF64:
+//			case R_X86_64_GOTPC32:
+//			case R_X86_64_GOT64:
+			case R_X86_64_GOTPCREL64:
+//			case R_X86_64_GOTPC64:
 				return true;
-			case X86_64_ElfRelocationConstants.R_X86_64_GOTPCRELX:
-			case X86_64_ElfRelocationConstants.R_X86_64_REX_GOTPCRELX:
+			case R_X86_64_GOTPCRELX:
+			case R_X86_64_REX_GOTPCRELX:
 				// NOTE: Relocation may not actually require GOT entry in which case %got 
 				// may be over-allocated, but is required in some cases.
 				return true;
@@ -135,6 +140,13 @@ class X86_64_ElfRelocationContext extends ElfRelocationContext {
 	}
 
 	private Address allocateGot() {
+
+		if (allocatedGotAddress != null) {
+			if (allocatedGotAddress == Address.NO_ADDRESS) {
+				return null;
+			}
+			return allocatedGotAddress;
+		}
 
 		allocatedGotAddress = Address.NO_ADDRESS;
 		nextAllocatedGotEntryAddress = Address.NO_ADDRESS;
@@ -188,7 +200,9 @@ class X86_64_ElfRelocationContext extends ElfRelocationContext {
 	 */
 	private Address getNextAllocatedGotEntryAddress() {
 		if (nextAllocatedGotEntryAddress == null) {
-			allocateGot();
+			if (allocateGot() == null) {
+				return Address.NO_ADDRESS; // failed to allocate got
+			}
 		}
 
 		Address addr = nextAllocatedGotEntryAddress;
@@ -254,6 +268,10 @@ class X86_64_ElfRelocationContext extends ElfRelocationContext {
 				ElfRelocationHandler.GOT_BLOCK_NAME, allocatedGotAddress, size,
 				"NOTE: This block is artificial and allows ELF Relocations to work correctly",
 				"Elf Loader", true, false, false, loadHelper.getLog());
+
+			// Mark block as an artificial fabrication
+			block.setArtificial(true);
+
 			DataConverter converter =
 				program.getMemory().isBigEndian() ? BigEndianDataConverter.INSTANCE
 						: LittleEndianDataConverter.INSTANCE;

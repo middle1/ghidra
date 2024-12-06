@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,7 +21,6 @@ import java.util.Collection;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import javax.swing.*;
 import javax.swing.table.TableColumn;
@@ -116,27 +115,11 @@ public class DebuggerLegacyRegionsPanel extends JPanel {
 		}
 	}
 
-	protected static RegionRow getSelectedRegionRow(ActionContext context) {
-		if (!(context instanceof DebuggerRegionActionContext)) {
-			return null;
-		}
-		DebuggerRegionActionContext ctx = (DebuggerRegionActionContext) context;
-		Set<RegionRow> regions = ctx.getSelectedRegions();
-		if (regions.size() != 1) {
-			return null;
-		}
-		return regions.iterator().next();
-	}
-
 	protected static Set<TraceMemoryRegion> getSelectedRegions(ActionContext context) {
-		if (!(context instanceof DebuggerRegionActionContext)) {
+		if (!(context instanceof DebuggerRegionActionContext ctx)) {
 			return null;
 		}
-		DebuggerRegionActionContext ctx = (DebuggerRegionActionContext) context;
-		return ctx.getSelectedRegions()
-				.stream()
-				.map(r -> r.getRegion())
-				.collect(Collectors.toSet());
+		return ctx.getSelectedRegions();
 	}
 
 	private class RegionsListener extends TraceDomainObjectListener {
@@ -279,23 +262,13 @@ public class DebuggerLegacyRegionsPanel extends JPanel {
 		return !ctx.getSelectedRegions().isEmpty();
 	}
 
-	private static Set<TraceMemoryRegion> getSelectedRegions(DebuggerRegionActionContext ctx) {
-		if (ctx == null) {
-			return null;
-		}
-		return ctx.getSelectedRegions()
-				.stream()
-				.map(r -> r.getRegion())
-				.collect(Collectors.toSet());
-	}
-
 	protected void navigateToSelectedRegion() {
 		if (listingService != null) {
 			int selectedRow = regionTable.getSelectedRow();
 			int selectedColumn = regionTable.getSelectedColumn();
 			Object value = regionTable.getValueAt(selectedRow, selectedColumn);
-			if (value instanceof Address) {
-				listingService.goTo((Address) value, true);
+			if (value instanceof Address address) {
+				listingService.goTo(address, true);
 			}
 		}
 	}
@@ -321,7 +294,6 @@ public class DebuggerLegacyRegionsPanel extends JPanel {
 		currentTrace = trace;
 		addNewListeners();
 		loadRegions();
-		contextChanged();
 	}
 
 	public void contextChanged() {

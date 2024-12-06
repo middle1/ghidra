@@ -1,17 +1,17 @@
 ## ###
-#  IP: GHIDRA
-# 
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#  
-#       http://www.apache.org/licenses/LICENSE-2.0
-#  
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# IP: GHIDRA
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 ##
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import redirect_stdout
@@ -19,11 +19,10 @@ from io import StringIO
 import re
 import sys
 
-from pybag import pydbg
-from pybag.dbgeng import core as DbgEng, exception
-
 from ghidratrace import sch
 from ghidratrace.client import MethodRegistry, ParamDesc, Address, AddressRange
+from pybag import pydbg
+from pybag.dbgeng import core as DbgEng, exception
 
 from . import util, commands
 
@@ -40,13 +39,16 @@ AVAILABLE_PATTERN = re.compile('Available\[(?P<pid>\\d*)\]')
 WATCHPOINT_PATTERN = re.compile('Watchpoints\[(?P<watchnum>\\d*)\]')
 BREAKPOINT_PATTERN = re.compile('Breakpoints\[(?P<breaknum>\\d*)\]')
 BREAK_LOC_PATTERN = extre(BREAKPOINT_PATTERN, '\[(?P<locnum>\\d*)\]')
-PROCESS_PATTERN = re.compile('Processes\[(?P<procnum>\\d*)\]')
-PROC_BREAKS_PATTERN = extre(PROCESS_PATTERN, '\.Breakpoints')
+SESSIONS_PATTERN = re.compile('Sessions')
+SESSION_PATTERN = extre(SESSIONS_PATTERN, '\[(?P<snum>\\d*)\]')
+PROCESSES_PATTERN = extre(SESSION_PATTERN, '\.Processes')
+PROCESS_PATTERN = extre(PROCESSES_PATTERN, '\[(?P<procnum>\\d*)\]')
+PROC_BREAKS_PATTERN = extre(PROCESS_PATTERN, '\.Debug.Breakpoints')
 PROC_BREAKBPT_PATTERN = extre(PROC_BREAKS_PATTERN, '\[(?P<breaknum>\\d*)\]')
 ENV_PATTERN = extre(PROCESS_PATTERN, '\.Environment')
 THREADS_PATTERN = extre(PROCESS_PATTERN, '\.Threads')
 THREAD_PATTERN = extre(THREADS_PATTERN, '\[(?P<tnum>\\d*)\]')
-STACK_PATTERN = extre(THREAD_PATTERN, '\.Stack')
+STACK_PATTERN = extre(THREAD_PATTERN, '\.Stack.Frames')
 FRAME_PATTERN = extre(STACK_PATTERN, '\[(?P<level>\\d*)\]')
 REGS_PATTERN0 = extre(THREAD_PATTERN, '.Registers')
 REGS_PATTERN = extre(FRAME_PATTERN, '.Registers')
@@ -197,21 +199,30 @@ def execute(cmd: str, to_string: bool=False):
         exec(cmd, shared_globals)
 
 
-@REGISTRY.method
+@REGISTRY.method(action='evaluate', display='Evaluate')
 # @util.dbg.eng_thread
-def evaluate(expr: str):
+def evaluate(
+	session: sch.Schema('Session'),
+ 	expr: ParamDesc(str, display='Expr')):
     """Evaluate a Python3 expression."""
     return str(eval(expr, shared_globals))
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display="Refresh", condition=util.dbg.use_generics)
+def refresh_generic(node: sch.OBJECT):
+    """List processes on pydbg's host system."""
+    with commands.open_tracked_tx('Refresh Generic'):
+        commands.ghidra_trace_put_generic(node)
+
+
+@REGISTRY.method(action='refresh', display='Refresh Available')
 def refresh_available(node: sch.Schema('AvailableContainer')):
     """List processes on pydbg's host system."""
     with commands.open_tracked_tx('Refresh Available'):
         commands.ghidra_trace_put_available()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Breakpoints')
 def refresh_breakpoints(node: sch.Schema('BreakpointContainer')):
     """
     Refresh the list of breakpoints (including locations for the current
@@ -221,14 +232,14 @@ def refresh_breakpoints(node: sch.Schema('BreakpointContainer')):
         commands.ghidra_trace_put_breakpoints()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Processes')
 def refresh_processes(node: sch.Schema('ProcessContainer')):
     """Refresh the list of processes."""
     with commands.open_tracked_tx('Refresh Processes'):
-        commands.ghidra_trace_put_threads()
+        commands.ghidra_trace_put_processes()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Breakpoint Locations')
 def refresh_proc_breakpoints(node: sch.Schema('BreakpointLocationContainer')):
     """
     Refresh the breakpoint locations for the process.
@@ -240,21 +251,21 @@ def refresh_proc_breakpoints(node: sch.Schema('BreakpointLocationContainer')):
         commands.ghidra_trace_put_breakpoints()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Environment')
 def refresh_environment(node: sch.Schema('Environment')):
     """Refresh the environment descriptors (arch, os, endian)."""
     with commands.open_tracked_tx('Refresh Environment'):
         commands.ghidra_trace_put_environment()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Threads')
 def refresh_threads(node: sch.Schema('ThreadContainer')):
     """Refresh the list of threads in the process."""
     with commands.open_tracked_tx('Refresh Threads'):
         commands.ghidra_trace_put_threads()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Stack')
 def refresh_stack(node: sch.Schema('Stack')):
     """Refresh the backtrace for the thread."""
     tnum = find_thread_by_stack_obj(node)
@@ -262,7 +273,7 @@ def refresh_stack(node: sch.Schema('Stack')):
         commands.ghidra_trace_put_frames()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Registers')
 def refresh_registers(node: sch.Schema('RegisterValueContainer')):
     """Refresh the register values for the frame."""
     tnum = find_thread_by_regs_obj(node)
@@ -270,14 +281,14 @@ def refresh_registers(node: sch.Schema('RegisterValueContainer')):
         commands.ghidra_trace_putreg()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Memory')
 def refresh_mappings(node: sch.Schema('Memory')):
     """Refresh the list of memory regions for the process."""
     with commands.open_tracked_tx('Refresh Memory Regions'):
         commands.ghidra_trace_put_regions()
 
 
-@REGISTRY.method(action='refresh')
+@REGISTRY.method(action='refresh', display='Refresh Modules')
 def refresh_modules(node: sch.Schema('ModuleContainer')):
     """
     Refresh the modules and sections list for the process.
@@ -314,15 +325,16 @@ def remove_process(process: sch.Schema('Process')):
     dbg().detach_proc()
 
 
-@REGISTRY.method(action='connect')
+@REGISTRY.method(action='connect', display='Connect')
 @util.dbg.eng_thread
-def target(process: sch.Schema('Process'), spec: str):
+def target(
+	session: sch.Schema('Session'), 
+	cmd: ParamDesc(str, display='Command')):
     """Connect to a target machine or process."""
-    find_proc_by_obj(process)
-    dbg().attach_kernel(spec)
+    dbg().attach_kernel(cmd)
 
 
-@REGISTRY.method(action='attach')
+@REGISTRY.method(action='attach', display='Attach')
 @util.dbg.eng_thread
 def attach_obj(target: sch.Schema('Attachable')):
     """Attach the process to the given target."""
@@ -330,29 +342,34 @@ def attach_obj(target: sch.Schema('Attachable')):
     dbg().attach_proc(pid)
 
 
-@REGISTRY.method(action='attach')
+@REGISTRY.method(action='attach', display='Attach by pid')
 @util.dbg.eng_thread
-def attach_pid(pid: int):
+def attach_pid(
+	session: sch.Schema('Session'), 
+	pid: ParamDesc(str, display='PID')):
     """Attach the process to the given target."""
-    dbg().attach_proc(pid)
+    dbg().attach_proc(int(pid))
 
 
-@REGISTRY.method(action='attach')
+@REGISTRY.method(action='attach', display='Attach by name')
 @util.dbg.eng_thread
-def attach_name(process: sch.Schema('Process'), name: str):
+def attach_name(
+	session: sch.Schema('Session'), 
+	name: ParamDesc(str, display='Name')):
     """Attach the process to the given target."""
     dbg().attach_proc(name)
 
 
-@REGISTRY.method
+@REGISTRY.method(action='detach', display='Detach')
 @util.dbg.eng_thread
 def detach(process: sch.Schema('Process')):
     """Detach the process's target."""
     dbg().detach_proc()
 
 
-@REGISTRY.method(action='launch')
+@REGISTRY.method(action='launch', display='Launch')
 def launch_loader(
+		session: sch.Schema('Session'),
         file: ParamDesc(str, display='File'),
         args: ParamDesc(str, display='Arguments')=''):
     """
@@ -364,8 +381,9 @@ def launch_loader(
     commands.ghidra_trace_create(command=file, start_trace=False)
 
 
-@REGISTRY.method(action='launch')
+@REGISTRY.method(action='launch', display='LaunchEx')
 def launch(
+		session: sch.Schema('Session'),
         file: ParamDesc(str, display='File'),
         args: ParamDesc(str, display='Arguments')='',
         initial_break: ParamDesc(bool, display='Initial Break')=True,
@@ -422,7 +440,7 @@ def step_out(thread: sch.Schema('Thread')):
     util.dbg.run_async(lambda: dbg().stepout())
 
 
-@REGISTRY.method(action='step_to')
+@REGISTRY.method(action='step_to', display='Step To')
 def step_to(thread: sch.Schema('Thread'), address: Address, max=None):
     """Continue execution up to the given address."""
     find_thread_by_obj(thread)
@@ -527,6 +545,7 @@ def delete_breakpoint(breakpoint: sch.Schema('BreakpointSpec')):
 
 
 @REGISTRY.method
+@util.dbg.eng_thread
 def read_mem(process: sch.Schema('Process'), range: AddressRange):
     """Read memory."""
     # print("READ_MEM: process={}, range={}".format(process, range))

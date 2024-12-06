@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -310,6 +310,9 @@ public class DBTraceGuestPlatform extends DBAnnotatedObject
 
 	@Override
 	public Address mapHostToGuest(Address hostAddress) {
+		if (hostAddress == null) {
+			return null;
+		}
 		try (LockHold hold = LockHold.lock(manager.lock.readLock())) {
 			Entry<Address, DBTraceGuestPlatformMappedRange> floorEntry =
 				rangesByHostAddress.floorEntry(hostAddress);
@@ -322,6 +325,9 @@ public class DBTraceGuestPlatform extends DBAnnotatedObject
 
 	@Override
 	public AddressRange mapHostToGuest(AddressRange hostRange) {
+		if (hostRange == null) {
+			return null;
+		}
 		try (LockHold hold = LockHold.lock(manager.lock.readLock())) {
 			Entry<Address, DBTraceGuestPlatformMappedRange> floorEntry =
 				rangesByHostAddress.floorEntry(hostRange.getMinAddress());
@@ -350,6 +356,9 @@ public class DBTraceGuestPlatform extends DBAnnotatedObject
 
 	@Override
 	public Address mapGuestToHost(Address guestAddress) {
+		if (guestAddress == null) {
+			return null;
+		}
 		try (LockHold hold = LockHold.lock(manager.lock.readLock())) {
 			Entry<Address, DBTraceGuestPlatformMappedRange> floorEntry =
 				rangesByGuestAddress.floorEntry(guestAddress);
@@ -362,6 +371,9 @@ public class DBTraceGuestPlatform extends DBAnnotatedObject
 
 	@Override
 	public AddressRange mapGuestToHost(AddressRange guestRange) {
+		if (guestRange == null) {
+			return null;
+		}
 		try (LockHold hold = LockHold.lock(manager.lock.readLock())) {
 			Entry<Address, DBTraceGuestPlatformMappedRange> floorEntry =
 				rangesByGuestAddress.floorEntry(guestRange.getMinAddress());

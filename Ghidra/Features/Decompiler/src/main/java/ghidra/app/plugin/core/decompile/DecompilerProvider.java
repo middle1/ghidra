@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -165,6 +165,7 @@ public class DecompilerProvider extends NavigatableComponentProviderAdapter
 
 		plugin.getTool().addServiceListener(serviceListener);
 		programListener = new DecompilerProgramListener(controller, redecompileUpdater);
+		setDefaultFocusComponent(controller.getDecompilerPanel());
 	}
 
 //==================================================================================================
@@ -285,12 +286,6 @@ public class DecompilerProvider extends NavigatableComponentProviderAdapter
 	public void setMemento(LocationMemento memento) {
 		DecompilerLocationMemento decompMemento = (DecompilerLocationMemento) memento;
 		pendingViewerPosition = decompMemento.getViewerPosition();
-	}
-
-	@Override
-	public void requestFocus() {
-		controller.getDecompilerPanel().requestFocus();
-		tool.toFront(this);
 	}
 
 //==================================================================================================
@@ -1021,6 +1016,13 @@ public class DecompilerProvider extends NavigatableComponentProviderAdapter
 			new RemoveAllSecondaryHighlightsAction();
 		setGroupInfo(removeAllSecondadryHighlightsAction, highlightGroup, subGroupPosition++);
 
+		PreviousHighlightedTokenAction previousHighlightedTokenAction =
+			new PreviousHighlightedTokenAction();
+		setGroupInfo(previousHighlightedTokenAction, highlightGroup, subGroupPosition++);
+
+		NextHighlightedTokenAction nextHighlightedTokenAction = new NextHighlightedTokenAction();
+		setGroupInfo(nextHighlightedTokenAction, highlightGroup, subGroupPosition++);
+
 		String convertGroup = "7 - Convert Group";
 		subGroupPosition = 0;
 		RemoveEquateAction removeEquateAction = new RemoveEquateAction();
@@ -1060,7 +1062,7 @@ public class DecompilerProvider extends NavigatableComponentProviderAdapter
 		//
 		// Search
 		//
-		String searchGroup = "comment2 - Search Group";
+		String searchGroup = "Comment2 - Search Group";
 		subGroupPosition = 0; // reset for the next group
 
 		FindAction findAction = new FindAction();
@@ -1127,6 +1129,8 @@ public class DecompilerProvider extends NavigatableComponentProviderAdapter
 		addLocalAction(setSecondaryHighlightColorChooserAction);
 		addLocalAction(removeSecondaryHighlightAction);
 		addLocalAction(removeAllSecondadryHighlightsAction);
+		addLocalAction(nextHighlightedTokenAction);
+		addLocalAction(previousHighlightedTokenAction);
 		addLocalAction(convertBinaryAction);
 		addLocalAction(convertDecAction);
 		addLocalAction(convertFloatAction);
@@ -1170,7 +1174,14 @@ public class DecompilerProvider extends NavigatableComponentProviderAdapter
 	private void setGroupInfo(DockingAction action, String group, int subGroupPosition) {
 		MenuData popupMenuData = action.getPopupMenuData();
 		popupMenuData.setMenuGroup(group);
-		popupMenuData.setMenuSubGroup(Integer.toString(subGroupPosition));
+
+		// Some groups have numbers reach double-digits.  These will not compare correctly unless
+		// padded.  Ensure all string numbers are at least 2 digits.
+		String numberString = Integer.toString(subGroupPosition);
+		if (numberString.length() == 1) {
+			numberString = '0' + numberString;
+		}
+		popupMenuData.setMenuSubGroup(numberString);
 	}
 
 	private void graphServiceRemoved() {

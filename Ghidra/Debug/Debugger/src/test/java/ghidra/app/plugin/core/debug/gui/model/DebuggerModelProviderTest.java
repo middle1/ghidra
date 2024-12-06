@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,14 +19,15 @@ import static org.junit.Assert.*;
 
 import java.awt.event.MouseEvent;
 import java.util.*;
-import java.util.stream.Collectors;
+import java.util.stream.*;
 
 import org.jdom.JDOMException;
 import org.junit.*;
 
 import db.Transaction;
-import docking.widgets.table.DynamicTableColumn;
-import docking.widgets.table.GDynamicColumnTableModel;
+import docking.ActionContext;
+import docking.widgets.table.*;
+import docking.widgets.table.ColumnSortState.SortDirection;
 import docking.widgets.tree.GTree;
 import docking.widgets.tree.GTreeNode;
 import docking.widgets.tree.support.GTreeSelectionEvent.EventOrigin;
@@ -36,7 +37,7 @@ import ghidra.app.plugin.core.debug.gui.model.ObjectTableModel.PrimitiveRow;
 import ghidra.app.plugin.core.debug.gui.model.ObjectTableModel.ValueRow;
 import ghidra.app.plugin.core.debug.gui.model.ObjectTreeModel.AbstractNode;
 import ghidra.app.plugin.core.debug.gui.model.PathTableModel.PathRow;
-import ghidra.app.plugin.core.debug.gui.model.columns.TraceValueValColumn;
+import ghidra.app.plugin.core.debug.gui.model.columns.*;
 import ghidra.dbg.target.TargetEventScope;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.schema.SchemaContext;
@@ -66,6 +67,8 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 					        <element schema='Process' />
 					    </schema>
 					    <schema name='Process' elementResync='NEVER' attributeResync='ONCE'>
+					        <interface name='Process' />
+					        <interface name='Activatable' />
 					        <attribute name='Threads' schema='ThreadContainer' />
 					        <attribute name='Handles' schema='HandleContainer' />
 					    </schema>
@@ -75,6 +78,7 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 					    </schema>
 					    <schema name='Thread' elementResync='NEVER' attributeResync='NEVER'>
 					        <interface name='Thread' />
+					        <interface name='Activatable' />
 					        <attribute name='_display' schema='STRING' />
 					        <attribute name='_self' schema='Thread' />
 					        <attribute name='Stack' schema='Stack' />
@@ -86,6 +90,7 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 					    </schema>
 					    <schema name='Frame' elementResync='NEVER' attributeResync='NEVER'>
 					        <interface name='StackFrame' />
+					        <interface name='Activatable' />
 					    </schema>
 					    <schema name='HandleContainer' canonical='yes' elementResync='NEVER'
 					            attributeResync='ONCE'>
@@ -364,9 +369,17 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		modelProvider.setPath(TraceObjectKeyPath.parse("Processes[0].Handles"));
 		waitForTasks();
 
+		int keyColIndex =
+			waitForValue(() -> findColumnOfClass(modelProvider.elementsTablePanel.tableModel,
+				TraceValueKeyColumn.class));
 		int valColIndex =
 			waitForValue(() -> findColumnOfClass(modelProvider.elementsTablePanel.tableModel,
 				TraceValueValColumn.class));
+
+		TableSortStateEditor sortEditor = new TableSortStateEditor();
+		sortEditor.addSortedColumn(keyColIndex, SortDirection.ASCENDING);
+		modelProvider.elementsTablePanel.tableModel
+				.setTableSortState(sortEditor.createTableSortState());
 
 		waitForPass(() -> {
 			for (int i = 0; i < 10; i++) {
@@ -388,7 +401,7 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		waitForTasks();
 
 		modelProvider.pathField.setText("SomeNonsenseToBeCancelled");
-		triggerEscapeKey(modelProvider.pathField);
+		triggerEscape(modelProvider.pathField);
 		waitForSwing();
 
 		assertPathIsThreadsContainer();
@@ -400,26 +413,26 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 
 		TraceObjectManager objects = tb.trace.getObjectManager();
 		TraceObject root = objects.getRootObject();
-		TraceObjectKeyPath processesPath = TraceObjectKeyPath.parse("Processes");
-		TraceObject processes = objects.getObjectByCanonicalPath(processesPath);
+		TraceObjectKeyPath process0Path = TraceObjectKeyPath.parse("Processes[0]");
+		TraceObject process0 = objects.getObjectByCanonicalPath(process0Path);
 		traceManager.activateObject(root);
 		waitForTasks();
 
-		modelProvider.setTreeSelection(processesPath, EventOrigin.USER_GENERATED);
+		modelProvider.setTreeSelection(process0Path, EventOrigin.USER_GENERATED);
 		waitForSwing();
 
 		GTree tree = modelProvider.objectsTreePanel.tree;
 		GTreeNode node = waitForPass(() -> {
 			GTreeNode n = Unique.assertOne(tree.getSelectedNodes());
 			assertEquals(
-				"Processes@%d".formatted(System.identityHashCode(processes.getCanonicalParent(0))),
+				"[0]@%d".formatted(System.identityHashCode(process0.getCanonicalParent(0))),
 				n.getName());
 			return n;
 		});
 		clickTreeNode(tree, node, MouseEvent.BUTTON1);
 		clickTreeNode(tree, node, MouseEvent.BUTTON1);
 		waitForSwing();
-		waitForPass(() -> assertEquals(processes, traceManager.getCurrentObject()));
+		waitForPass(() -> assertEquals(process0, traceManager.getCurrentObject()));
 	}
 
 	@Test
@@ -560,8 +573,8 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		});
 		clickTableCell(modelProvider.attributesTablePanel.table, rowIndex, 0, 2);
 
-		assertEquals(TraceObjectKeyPath.parse("Processes[0].Threads"),
-			traceManager.getCurrentObject().getCanonicalPath());
+		// ThreadContainer is not activatable, so only changes provider's path
+		assertEquals(TraceObjectKeyPath.parse("Processes[0].Threads"), modelProvider.getPath());
 	}
 
 	@Test
@@ -633,8 +646,10 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		selectAttribute("_next");
 		waitForSwing();
 
-		assertEnabled(modelProvider, modelProvider.actionFollowLink);
-		performAction(modelProvider.actionFollowLink, modelProvider, true);
+		ActionContext ctx =
+			runSwing(() -> modelProvider.attributesTableListener.computeContext(true));
+		assertTrue(runSwing(() -> modelProvider.actionFollowLink.isEnabledForContext(ctx)));
+		performAction(modelProvider.actionFollowLink, ctx, true);
 
 		TraceObjectKeyPath thread3Path = TraceObjectKeyPath.parse("Processes[0].Threads[3]");
 		assertPathIs(thread3Path, 0, 5);
@@ -1057,6 +1072,7 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		try (Transaction tx = tb.startTransaction()) {
 			threads.setAttribute(Lifespan.nowOn(0), "Current", thread0);
 		}
+		waitForDomainObject(tb.trace);
 		waitForTasks();
 
 		assertEquals(11, node.getChildren().size());
@@ -1128,7 +1144,8 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		}
 		waitForTasks();
 
-		assertEquals(4, modelProvider.attributesTablePanel.tableModel.getModelData().size());
+		waitForPass(() -> assertEquals(4,
+			modelProvider.attributesTablePanel.tableModel.getModelData().size()));
 	}
 
 	@Test
@@ -1158,6 +1175,77 @@ public class DebuggerModelProviderTest extends AbstractGhidraHeadedDebuggerTest 
 		// TODO: Should I collapse entries that are links to the same object?
 		//   Would use the "Life" column to display span for each included entry.
 		//   Neat, but not sure it's worth it
-		assertEquals(14, modelProvider.elementsTablePanel.tableModel.getModelData().size());
+		waitForPass(() -> assertEquals(14,
+			modelProvider.elementsTablePanel.tableModel.getModelData().size()));
+	}
+
+	protected Stream<DynamicTableColumn<?, ?, ?>> streamColumns(
+			GDynamicColumnTableModel<?, ?> model) {
+		return IntStream.range(0, model.getColumnCount()).mapToObj(model::getColumn);
+	}
+
+	protected <T extends DynamicTableColumn<?, ?, ?>> T findColumnOfType(
+			GDynamicColumnTableModel<?, ?> model, Class<T> type) {
+		return streamColumns(model)
+				.flatMap(c -> type.isInstance(c) ? Stream.of(type.cast(c)) : Stream.of())
+				.findAny()
+				.orElse(null);
+	}
+
+	protected TraceValueLifePlotColumn getPlotColumn() {
+		return findColumnOfType(modelProvider.elementsTablePanel.tableModel,
+			TraceValueLifePlotColumn.class);
+	}
+
+	@Test
+	public void testLifePlotColumnFitsSnapshotsOnActivate() throws Throwable {
+		createTraceAndPopulateObjects();
+
+		traceManager.activateTrace(tb.trace);
+		waitForSwing();
+
+		// NB. The plot adds a margin of 1
+		assertEquals(Lifespan.span(0, 21), getPlotColumn().getFullRange());
+	}
+
+	@Test
+	public void testLifePlotColumnFitsSnapshotsOnAddSnapshot() throws Throwable {
+		createTraceAndPopulateObjects();
+
+		traceManager.activateTrace(tb.trace);
+		waitForSwing();
+
+		try (Transaction tx = tb.startTransaction()) {
+			tb.trace.getTimeManager().getSnapshot(30, true);
+		}
+		waitForDomainObject(tb.trace);
+
+		// NB. The plot adds a margin of 1
+		assertEquals(Lifespan.span(0, 31), getPlotColumn().getFullRange());
+
+		try (Transaction tx = tb.startTransaction()) {
+			tb.trace.getTimeManager().getSnapshot(31, true);
+		}
+		waitForDomainObject(tb.trace);
+
+		assertEquals(Lifespan.span(0, 32), getPlotColumn().getFullRange());
+	}
+
+	@Test
+	public void testLifePlotColumnFitsSnapshotsOnAddSnapshotSupressEvents() throws Throwable {
+		createTraceAndPopulateObjects();
+
+		traceManager.activateTrace(tb.trace);
+		waitForSwing();
+
+		tb.trace.setEventsEnabled(false);
+		try (Transaction tx = tb.startTransaction()) {
+			tb.trace.getTimeManager().getSnapshot(30, true);
+		}
+		tb.trace.setEventsEnabled(true);
+		waitForDomainObject(tb.trace);
+
+		// NB. The plot adds a margin of 1
+		assertEquals(Lifespan.span(0, 31), getPlotColumn().getFullRange());
 	}
 }

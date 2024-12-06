@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,6 +21,7 @@ import java.util.HashSet;
 
 import db.*;
 import db.util.ErrorHandler;
+import ghidra.framework.data.OpenMode;
 import ghidra.program.database.DBObjectCache;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.database.map.AddressMap;
@@ -72,7 +73,7 @@ class ModuleManager {
 	 * @throws VersionException if opening an existing program tree and an underlying table 
 	 * schema version differs from the expected version.
 	 */
-	ModuleManager(TreeManager treeMgr, DBRecord rec, int openMode, TaskMonitor monitor)
+	ModuleManager(TreeManager treeMgr, DBRecord rec, OpenMode openMode, TaskMonitor monitor)
 			throws IOException, CancelledException, VersionException {
 
 		this.treeMgr = treeMgr;
@@ -89,7 +90,7 @@ class ModuleManager {
 		moduleCache = new DBObjectCache<>(100);
 		fragCache = new DBObjectCache<>(100);
 
-		if (openMode == DBConstants.CREATE) {
+		if (openMode == OpenMode.CREATE) {
 			createRootModule();
 		}
 	}
@@ -98,7 +99,7 @@ class ModuleManager {
 		return FRAGMENT_ADDRESS_TABLE_NAME + treeID;
 	}
 
-	private void initializeAdapters(int openMode, TaskMonitor monitor)
+	private void initializeAdapters(OpenMode openMode, TaskMonitor monitor)
 			throws CancelledException, IOException, VersionException {
 
 		DBHandle handle = treeMgr.getDatabaseHandle();
@@ -126,10 +127,10 @@ class ModuleManager {
 		}
 
 		if (addrMap.isUpgraded()) {
-			if (openMode == DBConstants.UPDATE) {
+			if (openMode == OpenMode.UPDATE) {
 				versionExc = (new VersionException(true)).combine(versionExc);
 			}
-			else if (openMode == DBConstants.UPGRADE) {
+			else if (openMode == OpenMode.UPGRADE) {
 				addressUpgrade(handle, monitor);
 			}
 		}
@@ -413,9 +414,8 @@ class ModuleManager {
 			monitor.checkCancelled();
 			fragMap.clearRange(fromAddr, rangeEnd);
 
-			for (int i = 0; i < list.size(); i++) {
+			for (FragmentHolder fh : list) {
 				monitor.checkCancelled();
-				FragmentHolder fh = list.get(i);
 				fragMap.paintRange(fh.range.getMinAddress(), fh.range.getMaxAddress(),
 					new LongField(fh.frag.getKey()));
 				fh.frag.addRange(fh.range);
@@ -522,9 +522,9 @@ class ModuleManager {
 	}
 
 	/**
-	 * Perform recursive check to determine if specified id is a child or decendant
+	 * Perform recursive check to determine if specified id is a child or descendant
 	 * of the specified module.
-	 * @param id descendent child id (positive for module, negative for fragment)
+	 * @param id descendant child id (positive for module, negative for fragment)
 	 * @param moduleID module id (positive)
 	 * @return true if specified id is a descendant of moduleID.
 	 * @throws IOException if database IO error occurs

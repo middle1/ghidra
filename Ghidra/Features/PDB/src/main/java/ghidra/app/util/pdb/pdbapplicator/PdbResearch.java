@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -378,10 +378,12 @@ public class PdbResearch {
 		for (int indexNumber : developerDebugOrderIndexNumbers) {
 			monitor.checkCancelled();
 			PdbResearch.checkBreak(indexNumber);
-			FixupContext fixupContext = new FixupContext();
-			fixupContext.addStagedRecord(indexNumber);
-			applicator.getProcessedDataType(RecordNumber.typeRecordNumber(indexNumber),
-				fixupContext, true);
+			//20240214: neutered internals... containing method not being used at the moment...
+			// consider what needs to be done below
+//			FixupContext fixupContext = new FixupContext();
+//			fixupContext.addStagedRecord(indexNumber);
+//			applicator.getProcessedDataType(RecordNumber.typeRecordNumber(indexNumber),
+//				fixupContext, true);
 		}
 
 	}
@@ -426,7 +428,7 @@ public class PdbResearch {
 		MsSymbolApplier applier = applicator.getSymbolApplier(iter);
 		if (applier instanceof TypedefSymbolApplier typedefApplier) {
 			RecordNumber typeNumber = typedefApplier.getTypeRecordNumber();
-			AbstractMsType type = applicator.getPdb().getTypeRecord(typeNumber);
+			AbstractMsType type = applicator.getTypeRecord(typeNumber);
 			System.out
 					.println(
 						"UDT " + typedefApplier.getName() + " depends on " + type.toString());
@@ -796,8 +798,10 @@ public class PdbResearch {
 			return null;
 		}
 		MDMangGhidra demangler = new MDMangGhidra();
+		demangler.setMangledSymbol(mangledString);
+		demangler.setErrorOnRemainingChars(true);
 		try {
-			MDParsableItem parsableItem = demangler.demangle(mangledString, true);
+			MDParsableItem parsableItem = demangler.demangle();
 			if (parsableItem instanceof MDObjectCPP) {
 				MDObjectCPP mdObject = (MDObjectCPP) parsableItem;
 				return mdObject.getQualifiedName().toString();

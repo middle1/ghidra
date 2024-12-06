@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -56,12 +56,12 @@ import ghidra.app.plugin.core.debug.service.target.DebuggerTargetServicePlugin;
 import ghidra.app.plugin.core.debug.service.tracemgr.DebuggerTraceManagerServicePlugin;
 import ghidra.app.services.*;
 import ghidra.app.util.viewer.listingpanel.ListingPanel;
+import ghidra.async.AsyncTestUtils;
 import ghidra.dbg.model.AbstractTestTargetRegisterBank;
 import ghidra.dbg.model.TestDebuggerModelBuilder;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.schema.SchemaContext;
 import ghidra.dbg.target.schema.XmlSchemaContext;
-import ghidra.dbg.testutil.DebuggerModelTestUtils;
 import ghidra.debug.api.action.*;
 import ghidra.debug.api.model.*;
 import ghidra.docking.settings.SettingsImpl;
@@ -82,12 +82,13 @@ import ghidra.trace.model.thread.TraceThread;
 import ghidra.trace.util.TraceAddressSpace;
 import ghidra.trace.util.TraceEvents;
 import ghidra.util.InvalidNameException;
+import ghidra.util.NumericUtilities;
 import ghidra.util.datastruct.TestDataStructureErrorHandlerInstaller;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.ConsoleTaskMonitor;
 
 public abstract class AbstractGhidraHeadedDebuggerTest
-		extends AbstractGhidraHeadedIntegrationTest implements DebuggerModelTestUtils {
+		extends AbstractGhidraHeadedIntegrationTest implements AsyncTestUtils {
 
 	public static final String LANGID_TOYBE64 = "Toy:BE:64:default";
 
@@ -106,6 +107,10 @@ public abstract class AbstractGhidraHeadedDebuggerTest
 		protected DebuggerRegisterMapper createRegisterMapper(TargetRegisterContainer registers) {
 			return new DefaultDebuggerRegisterMapper(cSpec, registers, true);
 		}
+	}
+
+	protected static byte[] arr(String hex) {
+		return NumericUtilities.convertStringToBytes(hex);
 	}
 
 	protected static SchemaContext xmlSchema(String xml) {
@@ -401,8 +406,7 @@ public abstract class AbstractGhidraHeadedDebuggerTest
 	}
 
 	/**
-	 * Only use this to escape from pop-up menus. Otherwise, use
-	 * {@link #triggerEscapeKey(Component)}.
+	 * Only use this to escape from pop-up menus. Otherwise, use {@link #triggerEscape(Component)}.
 	 * 
 	 * @throws AWTException
 	 */
@@ -410,6 +414,16 @@ public abstract class AbstractGhidraHeadedDebuggerTest
 		Robot robot = new Robot();
 		robot.keyPress(KeyEvent.VK_ESCAPE);
 		robot.keyRelease(KeyEvent.VK_ESCAPE);
+	}
+
+	protected static void escapePopupMenu() {
+		waitForPass(noExc(() -> {
+			pressEscape();
+			assertEquals(0, runSwing(() -> {
+				return MenuSelectionManager.defaultManager().getSelectedPath().length;
+			}).intValue());
+		}));
+		waitForSwing();
 	}
 
 	protected static Point getViewportPosition(Component comp) {
@@ -604,8 +618,7 @@ public abstract class AbstractGhidraHeadedDebuggerTest
 
 	@BeforeClass
 	public static void beforeClass() {
-
-		// Note: we may decided to move this up to a framework-level base test class
+		// Note: we decided to move this up to a framework-level base test class
 		TestDataStructureErrorHandlerInstaller.installConcurrentExceptionErrorHandler();
 	}
 
@@ -646,7 +659,7 @@ public abstract class AbstractGhidraHeadedDebuggerTest
 
 			if (tb != null) {
 				if (traceManager != null && traceManager.getOpenTraces().contains(tb.trace)) {
-					traceManager.closeTrace(tb.trace);
+					traceManager.closeTraceNoConfirm(tb.trace);
 				}
 				tb.close();
 			}

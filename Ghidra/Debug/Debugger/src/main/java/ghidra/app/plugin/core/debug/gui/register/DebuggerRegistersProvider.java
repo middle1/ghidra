@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -43,6 +43,7 @@ import ghidra.app.plugin.core.data.DataSettingsDialog;
 import ghidra.app.plugin.core.debug.DebuggerPluginPackage;
 import ghidra.app.plugin.core.debug.gui.DebuggerProvider;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources;
+import ghidra.app.plugin.core.debug.gui.DebuggerResources.GoToAction;
 import ghidra.app.services.*;
 import ghidra.app.services.DebuggerControlService.StateEditor;
 import ghidra.async.AsyncLazyValue;
@@ -63,6 +64,7 @@ import ghidra.program.model.data.*;
 import ghidra.program.model.lang.*;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.util.CodeUnitInsertionException;
+import ghidra.program.util.ProgramLocation;
 import ghidra.trace.model.*;
 import ghidra.trace.model.guest.TracePlatform;
 import ghidra.trace.model.listing.*;
@@ -480,6 +482,8 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 	@AutoServiceConsumed
 	private DebuggerControlService controlService;
 	@AutoServiceConsumed
+	private DebuggerConsoleService consoleService;
+	@AutoServiceConsumed
 	private MarkerService markerService; // TODO: Mark address types (separate plugin?)
 	@SuppressWarnings("unused")
 	private final AutoService.Wiring autoServiceWiring;
@@ -568,6 +572,10 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		regsFilterPanel = new GhidraTableFilterPanel<>(regsTable, regsTableModel);
 		mainPanel.add(regsFilterPanel, BorderLayout.SOUTH);
 
+		String namePrefix = "Registers";
+		regsTable.setAccessibleNamePrefix(namePrefix);
+		regsFilterPanel.setAccessibleNamePrefix(namePrefix);
+
 		regsTable.getSelectionModel().addListSelectionListener(evt -> {
 			if (evt.getValueIsAdjusting()) {
 				return;
@@ -614,7 +622,10 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		List<DockingActionIf> result = new ArrayList<>();
 		String pluginName = plugin.getName();
 		for (AddressSpace space : currentTrace.getBaseAddressFactory().getAddressSpaces()) {
-			if (space.isRegisterSpace()) {
+			if (!space.isMemorySpace()) {
+				continue;
+			}
+			if (space.getType() == AddressSpace.TYPE_OTHER) {
 				continue;
 			}
 			Address address;
@@ -624,17 +635,29 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 			catch (AddressOutOfBoundsException e) {
 				continue;
 			}
+
+			String name = GoToAction.NAME + " " + address.toString(true);
+
 			// Use program view, not memory manager, so that "Force Full View" is respected.
-			if (!currentTrace.getProgramView().getMemory().contains(address)) {
-				continue;
-			}
-			String name = "Goto " + address.toString(true);
-			result.add(new ActionBuilder(name, pluginName).popupMenuPath(name).onAction(ctx -> {
-				if (listingService == null) {
-					return;
-				}
-				listingService.goTo(address, true);
-			}).build());
+			boolean enabled = currentTrace.getProgramView().getMemory().contains(address);
+			String extraDesc = enabled ? "" : ". Enable via Force Full View.";
+			result.add(new ActionBuilder(name, pluginName)
+					.popupMenuPath(name)
+					.popupMenuGroup("Go To")
+					.description(
+						"Navigate the dynamic listing to " + address.toString(true) + extraDesc)
+					.helpLocation(
+						new HelpLocation(pluginName, DebuggerResources.GoToAction.HELP_ANCHOR))
+					.enabledWhen(ctx -> enabled)
+					.popupWhen(ctx -> true)
+					.onAction(ctx -> {
+						if (listingService == null) {
+							return;
+						}
+						ProgramLocation loc = new ProgramLocation(current.getView(), address);
+						listingService.goTo(loc, true);
+					})
+					.build());
 		}
 		return result;
 	}
@@ -652,7 +675,8 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		if (address == null) {
 			return;
 		}
-		listingService.goTo(address, true);
+		ProgramLocation loc = new ProgramLocation(current.getView(), address);
+		listingService.goTo(loc, true);
 	}
 
 	@Override
@@ -847,15 +871,7 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		CompletableFuture<Void> future = editor.setRegister(rv);
 		future.exceptionally(ex -> {
 			ex = AsyncUtils.unwrapThrowable(ex);
-			if (ex instanceof DebuggerModelAccessException) {
-				Msg.error(this, "Could not write target register", ex);
-				plugin.getTool()
-						.setStatusInfo("Could not write target register: " + ex.getMessage());
-			}
-			else {
-				Msg.showError(this, getComponent(), "Edit Register",
-					"Could not write target register", ex);
-			}
+			reportError("Edit Register", "Could not write target register", ex);
 			return null;
 		});
 		return;
@@ -1020,8 +1036,9 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		if (regs == null && register.getAddressSpace().isRegisterSpace()) {
 			return false;
 		}
-		AddressRange range =
-			current.getPlatform().getConventionalRegisterRange(regs.getAddressSpace(), register);
+		AddressRange range = current.getPlatform()
+				.getConventionalRegisterRange(regs == null ? null : regs.getAddressSpace(),
+					register);
 		return viewKnown.contains(range.getMinAddress(), range.getMaxAddress());
 	}
 
@@ -1144,8 +1161,7 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 		if (mem == null) {
 			return result;
 		}
-		AddressSpace regSpace =
-			thread.getTrace().getBaseLanguage().getAddressFactory().getRegisterSpace();
+		AddressSpace regSpace = thread.getTrace().getBaseAddressFactory().getRegisterSpace();
 		AddressSet everKnown = new AddressSet();
 		for (Entry<TraceAddressSnapRange, TraceMemoryState> entry : mem.getMostRecentStates(
 			thread.getTrace().getTimeManager().getMaxSnap(),
@@ -1278,9 +1294,7 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 			current.getThread(), current.getFrame(), registers);
 		return future.exceptionally(ex -> {
 			ex = AsyncUtils.unwrapThrowable(ex);
-			String msg = "Could not read target registers for selected thread: " + ex.getMessage();
-			Msg.info(this, msg);
-			plugin.getTool().setStatusInfo(msg);
+			reportError(null, "Could not read target registers for selected thread", ex);
 			return ExceptionUtils.rethrow(ex);
 		}).thenApply(__ -> null);
 	}
@@ -1300,5 +1314,18 @@ public class DebuggerRegistersProvider extends ComponentProviderAdapter
 
 	public DebuggerCoordinates getCurrent() {
 		return current;
+	}
+
+	private void reportError(String title, String message, Throwable ex) {
+		plugin.getTool().setStatusInfo(message + ": " + ex.getMessage());
+		if (title != null && !(ex instanceof DebuggerModelAccessException)) {
+			Msg.showError(this, getComponent(), title, message, ex);
+		}
+		else if (consoleService != null) {
+			consoleService.log(DebuggerResources.ICON_LOG_ERROR, message, ex);
+		}
+		else {
+			Msg.error(this, message, ex);
+		}
 	}
 }

@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -297,26 +297,20 @@ public class DBTraceObjectMemoryRegion implements TraceObjectMemoryRegion, DBTra
 	}
 
 	protected static String keyForFlag(TraceMemoryFlag flag) {
-		switch (flag) {
-			case READ:
-				return TargetMemoryRegion.READABLE_ATTRIBUTE_NAME;
-			case WRITE:
-				return TargetMemoryRegion.WRITABLE_ATTRIBUTE_NAME;
-			case EXECUTE:
-				return TargetMemoryRegion.EXECUTABLE_ATTRIBUTE_NAME;
-			case VOLATILE:
-				return KEY_VOLATILE;
-			default:
-				throw new AssertionError();
-		}
+		return switch (flag) {
+			case READ -> TargetMemoryRegion.READABLE_ATTRIBUTE_NAME;
+			case WRITE -> TargetMemoryRegion.WRITABLE_ATTRIBUTE_NAME;
+			case EXECUTE -> TargetMemoryRegion.EXECUTABLE_ATTRIBUTE_NAME;
+			case VOLATILE -> KEY_VOLATILE;
+			default -> throw new AssertionError();
+		};
 	}
 
 	@Override
 	public void setFlags(Lifespan lifespan, Collection<TraceMemoryFlag> flags) {
 		try (LockHold hold = object.getTrace().lockWrite()) {
 			for (TraceMemoryFlag flag : TraceMemoryFlag.values()) {
-				Boolean val = flags.contains(flag) ? true : null;
-				object.setValue(lifespan, keyForFlag(flag), val);
+				object.setValue(lifespan, keyForFlag(flag), flags.contains(flag));
 			}
 		}
 	}
@@ -334,7 +328,7 @@ public class DBTraceObjectMemoryRegion implements TraceObjectMemoryRegion, DBTra
 	public void clearFlags(Lifespan lifespan, Collection<TraceMemoryFlag> flags) {
 		try (LockHold hold = object.getTrace().lockWrite()) {
 			for (TraceMemoryFlag flag : flags) {
-				object.setValue(lifespan, keyForFlag(flag), null);
+				object.setValue(lifespan, keyForFlag(flag), false);
 			}
 		}
 	}
@@ -384,6 +378,11 @@ public class DBTraceObjectMemoryRegion implements TraceObjectMemoryRegion, DBTra
 		try (LockHold hold = object.getTrace().lockWrite()) {
 			object.removeTree(computeSpan());
 		}
+	}
+
+	@Override
+	public boolean isValid(long snap) {
+		return object.getCanonicalParent(snap) != null;
 	}
 
 	@Override

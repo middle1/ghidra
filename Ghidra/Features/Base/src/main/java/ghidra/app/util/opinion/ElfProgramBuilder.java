@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -879,10 +879,8 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 		}
 		monitor.initialize(totalCount);
 
-		ElfRelocationContext context = null;
-		if (processRelocations) {
-			context = ElfRelocationContext.getRelocationContext(this, symbolMap);
-		}
+		ElfRelocationContext<?> context =
+			ElfRelocationContext.getRelocationContext(this, symbolMap);
 		try {
 			for (ElfRelocationTable relocationTable : relocationTables) {
 				monitor.checkCancelled();
@@ -890,14 +888,12 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			}
 		}
 		finally {
-			if (context != null) {
-				context.dispose();
-			}
+			context.dispose();
 		}
 	}
 
 	private void processRelocationTable(ElfRelocationTable relocationTable,
-			ElfRelocationContext context, TaskMonitor monitor) throws CancelledException {
+			ElfRelocationContext<?> context, TaskMonitor monitor) throws CancelledException {
 
 		Address defaultBase = getDefaultAddress(elf.adjustAddressForPrelink(0));
 		AddressSpace defaultSpace = defaultBase.getAddressSpace();
@@ -956,12 +952,12 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 	}
 
 	private void processRelocationTableEntries(ElfRelocationTable relocationTable,
-			ElfRelocationContext context, AddressSpace relocationSpace, long baseWordOffset,
+			ElfRelocationContext<?> context, AddressSpace relocationSpace, long baseWordOffset,
 			TaskMonitor monitor) throws CancelledException {
 
-		if (context != null) {
-			context.startRelocationTableProcessing(relocationTable);
-		}
+		boolean processRelocations = ElfLoaderOptionsFactory.performRelocations(options);
+
+		context.startRelocationTableProcessing(relocationTable);
 
 		ElfSymbolTable symbolTable = relocationTable.getAssociatedSymbolTable();
 		ElfRelocation[] relocs = relocationTable.getRelocations();
@@ -979,8 +975,8 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 		}
 
 		boolean relrTypeUnknown = false;
-		long relrRelocationType = 0;
-		if (relocationTable.isRelrTable() && context != null) {
+		int relrRelocationType = 0;
+		if (relocationTable.isRelrTable()) {
 			relrRelocationType = context.getRelrRelocationType();
 			if (relrRelocationType == 0) {
 				relrTypeUnknown = true;
@@ -993,9 +989,9 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			monitor.checkCancelled();
 			monitor.incrementProgress(1);
 
-			long type = reloc.getType();
-			if (type == 0) {
-				continue; // ignore relocation type 0 (i.e., ..._NONE)
+			int type = reloc.getType();
+			if (type == 0 && !relocationTable.isRelrTable()) {
+				continue; // ignore relocation type 0 if not a RELR table (i.e., ..._NONE)
 			}
 
 			int symbolIndex = reloc.getSymbolIndex();
@@ -1007,9 +1003,7 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			Address baseAddress = relocationSpace.getTruncatedAddress(baseWordOffset, true);
 
 			// relocation offset (r_offset) is defined to be a byte offset (assume byte size is 1)
-			Address relocAddr =
-				context != null ? context.getRelocationAddress(baseAddress, reloc.getOffset())
-						: baseAddress.addWrap(reloc.getOffset());
+			Address relocAddr = context.getRelocationAddress(baseAddress, reloc.getOffset());
 
 			long[] values = new long[] { reloc.getSymbolIndex() };
 
@@ -1021,10 +1015,15 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			Status status = Status.SKIPPED;
 			int byteLength = 0;
 			try {
+
+				if (!processRelocations) {
+					continue; // skip and record relocation
+				}
+
 				if (unableToApplyRelocs) {
 					status = Status.FAILURE;
-					ElfRelocationHandler.markAsError(program, relocAddr, type, symbolName,
-						"missing symbol table", log);
+					context.markRelocationError(relocAddr, type, symbolIndex, symbolName,
+						"Missing symbol table");
 					continue;
 				}
 
@@ -1039,23 +1038,23 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 					catch (Exception e) {
 						status = Status.FAILURE;
 						Msg.error(this,
-							"Unexpected exception while converting block to initialized", e);
-						ElfRelocationHandler.markAsUninitializedMemory(program, relocAddr, type,
-							reloc.getSymbolIndex(), symbolName, log);
+							"Unexpected exception while converting block to initialized for relocations",
+							e);
+						context.markRelocationError(relocAddr, type, symbolIndex, symbolName,
+							"Uninitialized memory");
 						continue;
 					}
 				}
 
-				if (context != null) {
-					if (relrTypeUnknown) {
-						status = Status.UNSUPPORTED;
-						ElfRelocationHandler.markAsUnsupportedRelr(program, relocAddr);
-					}
-					else {
-						RelocationResult result = context.processRelocation(reloc, relocAddr);
-						byteLength = result.byteLength();
-						status = result.status();
-					}
+				if (relrTypeUnknown) {
+					status = Status.UNSUPPORTED;
+					ElfRelocationHandler.bookmarkUnsupportedRelr(program, relocAddr, symbolIndex,
+						symbolName);
+				}
+				else {
+					RelocationResult result = context.processRelocation(reloc, relocAddr);
+					byteLength = result.byteLength();
+					status = result.status();
 				}
 			}
 			catch (MemoryAccessException e) {
@@ -1073,9 +1072,7 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			}
 		}
 
-		if (context != null) {
-			context.endRelocationTableProcessing();
-		}
+		context.endRelocationTableProcessing();
 	}
 
 	@Override
@@ -1547,6 +1544,10 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 
 			// assume any value in external is writable.
 			block.setWrite(true);
+
+			// Mark block as an artificial fabrication
+			block.setArtificial(true);
+
 			block.setSourceName(BLOCK_SOURCE_NAME);
 			block.setComment(
 				"NOTE: This block is artificial and allows ELF Relocations to work correctly");

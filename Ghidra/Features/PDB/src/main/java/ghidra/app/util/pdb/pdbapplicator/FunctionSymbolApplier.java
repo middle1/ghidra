@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,11 +15,14 @@
  */
 package ghidra.app.util.pdb.pdbapplicator;
 
+import java.util.List;
+
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
 import ghidra.app.cmd.function.CallDepthChangeInfo;
+import ghidra.app.util.SymbolPath;
 import ghidra.app.util.bin.format.pdb2.pdbreader.*;
 import ghidra.app.util.bin.format.pdb2.pdbreader.symbol.*;
-import ghidra.app.util.bin.format.pdb2.pdbreader.type.AbstractMsType;
+import ghidra.app.util.bin.format.pdb2.pdbreader.type.*;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.data.DataType;
@@ -28,6 +31,7 @@ import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.InvalidNameException;
+import ghidra.util.Msg;
 import ghidra.util.exception.*;
 import ghidra.util.task.TaskMonitor;
 
@@ -35,16 +39,14 @@ import ghidra.util.task.TaskMonitor;
  * Applier for {@link AbstractProcedureStartMsSymbol} and  {@link AbstractThunkMsSymbol} symbols.
  */
 public class FunctionSymbolApplier extends AbstractBlockContextApplier
-		implements BlockNestingSymbolApplier {
+		implements BlockNestingSymbolApplier, DisassembleableAddressSymbolApplier {
+
+	private Function function = null;
 
 	// Do not trust any of these variables... this is work in progress (possibly getting
 	//  torn up), but non-functioning code in other classes or this class still depend on these
-	private Address address_x;
-	private Function function_x = null;
 	private long specifiedFrameSize_x = 0;
 	private long currentFrameSize_x = 0;
-
-	private Address currentBlockAddress;
 
 	// might not need this, but investigating whether it will help us.  TODO remove?
 	private int baseParamOffset = 0;
@@ -72,6 +74,11 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 		processSymbol(iter);
 	}
 
+	@Override
+	public Address getAddressForDisassembly() {
+		return applicator.getAddress(symbol);
+	}
+
 	private void processSymbol(MsSymbolIterator iter)
 			throws CancelledException, PdbException {
 
@@ -90,23 +97,78 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 			return;
 		}
 
-		Function function = applicator.getExistingOrCreateOneByteFunction(address);
+		function = applicator.getExistingOrCreateOneByteFunction(address);
 		if (function == null) {
 			return;
 		}
-
-		// Collecting all addresses from all functions to do one large bulk disassembly of the
-		//  complete AddressSet of function addresses.  We could consider removing this logic
-		//  of collecting them all for bulk disassembly and do individual disassembly at the
-		//  same deferred point in time.
-		applicator.scheduleDisassembly(address);
 
 		boolean succeededSetFunctionSignature = setFunctionDefinition(function, address);
 
 		// If signature was set, then override existing primary mangled symbol with
 		// the global symbol that provided this signature so that Demangler does not overwrite
 		// the richer data type we get with global symbols.
-		applicator.createSymbol(address, name, succeededSetFunctionSignature);
+		applicator.createSymbol(address, getReconciledSymbolPath(), succeededSetFunctionSignature);
+	}
+
+	private SymbolPath getReconciledSymbolPath() {
+
+		String name = symbol.getName();
+		SymbolPath symbolPath = new SymbolPath(name);
+		RecordNumber typeRecordNumber = symbol.getTypeRecordNumber();
+		AbstractMsType fType = applicator.getTypeRecord(typeRecordNumber);
+		if (!(fType instanceof AbstractMemberFunctionMsType memberFunction)) {
+			return symbolPath;
+		}
+
+		// Get containing type, and while we are at it, ensure that it is defined as a class
+		//  namespace.
+		// This has likely already been done, but we want to be sure that it has.
+		RecordNumber rc = memberFunction.getContainingClassRecordNumber();
+		SymbolPath containerSymbolPath = AbstractComplexTypeApplier.getSymbolPath(applicator, rc);
+		applicator.predefineClass(containerSymbolPath);
+
+		// Make sure that the symbol path of the underlying type of the this pointer is also
+		//  defined as a class namespace.
+		// Probably does not need to be done, as it likely was done for the underlying data type.
+		AbstractMsType p = memberFunction.getThisPointerType();
+		if (p instanceof AbstractPointerMsType ptr) {
+			RecordNumber rpt = ptr.getUnderlyingRecordNumber();
+			if (!rpt.equals(rc)) {
+				SymbolPath underlyingSymbolPath =
+					AbstractComplexTypeApplier.getSymbolPath(applicator, rc);
+				applicator.predefineClass(underlyingSymbolPath);
+			}
+		}
+
+		// Only trying to fix up anonymous namespaces
+		if (!name.startsWith("`anonymous namespace'") && !name.startsWith("anonymous-namespace")) {
+			return symbolPath;
+		}
+
+		// Reconcile path of function with path of container type.
+		//  Logic is a little different from what is in MDMangUtils.
+		// Want all namespace nodes to match except possibly the first one, which should be
+		//  the anonymous namespace one.
+		List<String> containerParts = containerSymbolPath.asList();
+		List<String> parts = symbolPath.asList();
+		if (containerParts.size() != parts.size() - 1) {
+			Msg.info(this, "Unmatched symbol path size during fn name reconcilation");
+			return symbolPath;
+		}
+		for (int i = 0; i < containerParts.size(); i++) {
+			String containerPart = containerParts.get(i);
+			String part = parts.get(i);
+			if (!containerPart.equals(part)) {
+				if (i == 0) {
+					parts.set(i, containerPart);
+				}
+				else {
+					Msg.info(this, "Mismatch symbol path nodes during fn name reconcilation");
+					return symbolPath;
+				}
+			}
+		}
+		return new SymbolPath(parts);
 	}
 
 	/**
@@ -135,11 +197,11 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 
 		function.setNoReturn(isNonReturning());
 
-		AbstractMsType fType = applicator.getPdb().getTypeRecord(typeRecordNumber);
+		AbstractMsType fType = applicator.getTypeRecord(typeRecordNumber);
 		MsTypeApplier applier = applicator.getTypeApplier(fType);
 		if (!(applier instanceof AbstractFunctionTypeApplier)) {
 			applicator.appendLogMsg("Error: Failed to resolve datatype RecordNumber " +
-				typeRecordNumber + " at " + address_x);
+				typeRecordNumber + " at " + address);
 			return false;
 		}
 
@@ -181,6 +243,19 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 		String name = symbol.getName();
 		Address address = applicator.getAddress(symbol);
 
+		// Save off the function length for lines processing
+		Long functionLength = symbol.getProcedureLength();
+		applicator.setFunctionLength(address, functionLength.intValue());
+
+		function = applicator.getExistingFunction(address);
+		if (function == null) {
+			// Skip all interim symbols records
+			if (!processEndSymbol(symbol.getEndPointer(), iter)) {
+				applicator.appendLogMsg("PDB: Failed to process function at address " + address);
+			}
+			return;
+		}
+
 		long start = getStartOffset();
 		long end = getEndOffset();
 		Address blockAddress = address.add(start);
@@ -194,7 +269,7 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 	 * @return the Function
 	 */
 	Function getFunction() {
-		return function_x;
+		return function;
 	}
 
 	/**
@@ -248,16 +323,17 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 	 * @param dataType data type of the variable.
 	 */
 	void setLocalVariable(Address varAddress, String varName, DataType dataType) {
-		if (currentBlockAddress == null) {
+		if (varAddress == null) {
 			return; // silently return.
 		}
 		if (varName.isBlank()) {
 			return; // silently return.
 		}
 
-		String plateAddition = "PDB: static local for function (" + address_x + "): " + getName();
+		String plateAddition =
+			"PDB: static local for function (" + applicator.getAddress(symbol) + "): " + getName();
 		// TODO: 20220210... consider adding function name as namespace to varName
-		applicator.createSymbol(varAddress, varName, true, plateAddition);
+		applicator.createSymbol(varAddress, varName, false, plateAddition);
 	}
 
 	// Method copied from ApplyStackVariables (ghidra.app.util.bin.format.pdb package)
@@ -270,21 +346,21 @@ public class FunctionSymbolApplier extends AbstractBlockContextApplier
 	 */
 	private int getFrameBaseOffset(TaskMonitor monitor) throws CancelledException {
 
-		int retAddrSize = function_x.getProgram().getDefaultPointerSize();
+		int retAddrSize = function.getProgram().getDefaultPointerSize();
 
 		if (retAddrSize != 8) {
 			// don't do this for 32 bit.
 			return -retAddrSize;  // 32 bit has a -4 byte offset
 		}
 
-		Register frameReg = function_x.getProgram().getCompilerSpec().getStackPointer();
-		Address entryAddr = function_x.getEntryPoint();
+		Register frameReg = function.getProgram().getCompilerSpec().getStackPointer();
+		Address entryAddr = function.getEntryPoint();
 		AddressSet scopeSet = new AddressSet();
 		scopeSet.addRange(entryAddr, entryAddr.add(64));
 		CallDepthChangeInfo valueChange =
-			new CallDepthChangeInfo(function_x, scopeSet, frameReg, monitor);
+			new CallDepthChangeInfo(function, scopeSet, frameReg, monitor);
 		InstructionIterator instructions =
-			function_x.getProgram().getListing().getInstructions(scopeSet, true);
+			function.getProgram().getListing().getInstructions(scopeSet, true);
 		int max = 0;
 		while (instructions.hasNext()) {
 			monitor.checkCancelled();

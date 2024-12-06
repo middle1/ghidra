@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -59,7 +59,7 @@ import ghidra.util.task.TaskMonitor;
  *   
  *   // Setup up the actual decompiler process for a
  *   // particular program, using all the above initialization
- *   ifc.openProgram(program,language);
+ *   ifc.openProgram(program);
  *   
  *   // Make calls to the decompiler:
  *   DecompileResults res = ifc.decompileFunction(func,0,taskmonitor);
@@ -84,10 +84,10 @@ public class DecompInterface {
 
 	public static class EncodeDecodeSet {
 		public OverlayAddressSpace overlay;		// Active overlay space or null
-		public Encoder mainQuery;		// Encoder for main query to decompiler process
+		public CachedEncoder mainQuery;		// Encoder for main query to decompiler process
 		public PackedDecode mainResponse;	// Decoder for main response from the decompiler process
 		public PackedDecode callbackQuery;	// Decoder for queries from the decompiler process
-		public PackedEncode callbackResponse;	// Encode for response to decompiler queries
+		public PatchPackedEncode callbackResponse;	// Encode for response to decompiler queries
 
 		/**
 		 * Set up encoders and decoders for functions that are not in overlay address spaces
@@ -95,10 +95,10 @@ public class DecompInterface {
 		 */
 		public EncodeDecodeSet(Program program) {
 			overlay = null;
-			mainQuery = new PackedEncode();
+			mainQuery = new PatchPackedEncode();
 			mainResponse = new PackedDecode(program.getAddressFactory());
 			callbackQuery = new PackedDecode(program.getAddressFactory());
-			callbackResponse = new PackedEncode();
+			callbackResponse = new PatchPackedEncode();
 		}
 
 		/**
@@ -272,7 +272,7 @@ public class DecompInterface {
 			decompProcess = DecompileProcessFactory.get();
 		}
 		long uniqueBase = UniqueLayout.SLEIGH_BASE.getOffset(pcodelanguage);
-		XmlEncode xmlEncode = new XmlEncode();
+		XmlEncode xmlEncode = new XmlEncode(false);
 		pcodelanguage.encodeTranslator(xmlEncode, program.getAddressFactory(), uniqueBase);
 		String tspec = xmlEncode.toString();
 		xmlEncode.clear();
@@ -462,18 +462,18 @@ public class DecompInterface {
 	 * The current predefined analysis class are:
 	 * <ul>
 	 *   <li>"decompile" - this is the default, and performs all
-	 *      analysis steps suitable for producing C code.
+	 *      analysis steps suitable for producing C code.</li>
 	 *   <li>"normalize" - omits type recovery from the analysis
 	 *      and some of the final clean-up steps involved in
 	 *      making valid C code.  It is suitable for creating
-	 *      normalized pcode syntax trees of the dataflow.
+	 *      normalized pcode syntax trees of the dataflow.</li>
 	 *   <li>"firstpass" - does no analysis, but produces an
-	 *      unmodified syntax tree of the dataflow from the
-	 *   <li>"register" - does ???.
+	 *      unmodified syntax tree of the dataflow from the</li>
+	 *   <li>"register" - does ???.</li>
 	 *   <li>"paramid" - does required amount of decompilation
 	 *      followed by analysis steps that send parameter
 	 *      measure information for parameter id analysis.
-	 *      raw pcode.
+	 *      raw pcode.</li>
 	 * </ul>
 	 *      
 	 * <p>
@@ -776,20 +776,16 @@ public class DecompInterface {
 	public synchronized DecompileResults decompileFunction(Function func, int timeoutSecs,
 			TaskMonitor monitor) {
 
+		dtmanage.clearTemporaryIds();
 		decompileMessage = "";
-		if (monitor != null && monitor.isCancelled()) {
-			return null;
+
+		if (program == null || (monitor != null && monitor.isCancelled())) {
+			return new DecompileResults(func, pcodelanguage, compilerSpec, dtmanage,
+				decompileMessage, null, DecompileProcess.DisposeState.DISPOSED_ON_CANCEL);
 		}
 
 		if (monitor != null) {
 			monitor.addCancelledListener(monitorListener);
-		}
-
-		dtmanage.clearTemporaryIds();
-
-		if (program == null) {
-			return new DecompileResults(func, pcodelanguage, null, dtmanage, decompileMessage, null,
-				DecompileProcess.DisposeState.DISPOSED_ON_CANCEL);
 		}
 
 		Decoder decoder = null;

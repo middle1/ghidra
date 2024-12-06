@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -68,6 +68,11 @@ public class ByteViewerComponent extends FieldPanel implements FieldMouseListene
 	private ByteViewerHighlighter highlightProvider = new ByteViewerHighlighter();
 	private int highlightButton = MouseEvent.BUTTON2;
 
+	private FieldSelectionListener liveSelectionListener = (selection, trigger) -> {
+		ByteBlockSelection sel = processFieldSelection(selection);
+		panel.updateLiveSelection(ByteViewerComponent.this, sel);
+	};
+
 	/**
 	 * Constructor
 	 *
@@ -89,6 +94,7 @@ public class ByteViewerComponent extends FieldPanel implements FieldMouseListene
 		this.layoutModel = layoutModel;
 
 		setName(model.getName());
+		getAccessibleContext().setAccessibleName("Byte Viewer " + model.getName());
 		initialize();
 
 		// specialized line coloring
@@ -205,12 +211,12 @@ public class ByteViewerComponent extends FieldPanel implements FieldMouseListene
 		if (blockSet == null || doingRefresh) {
 			return;
 		}
+
 		ByteBlockSelection sel = processFieldSelection(selection);
 
 		// notify panel to update other components
 		panel.updateSelection(this, sel);
 		setViewerSelection(sel);
-
 	}
 
 	/**
@@ -338,12 +344,10 @@ public class ByteViewerComponent extends FieldPanel implements FieldMouseListene
 		return null;
 	}
 
-	/**
-	 * Add listeners.
-	 */
 	void addListeners() {
 		addFieldLocationListener(this);
 		addFieldSelectionListener(this);
+		addLiveFieldSelectionListener(liveSelectionListener);
 		addFieldInputListener(this);
 		addFieldMouseListener(this);
 	}
@@ -407,8 +411,8 @@ public class ByteViewerComponent extends FieldPanel implements FieldMouseListene
 	}
 
 	/**
-	 * Get the the color of unsaved byte changes
-	 * @return the the color of unsaved byte changes
+	 * Get the color of unsaved byte changes
+	 * @return the color of unsaved byte changes
 	 */
 	Color getEditColor() {
 		return editColor;
@@ -911,9 +915,8 @@ public class ByteViewerComponent extends FieldPanel implements FieldMouseListene
 
 	ByteField getField(BigInteger index, int fieldNum) {
 		if (indexMap != null) {
-			int fieldOffset = indexMap.getFieldOffset(index, fieldNum, fieldFactories);
 			if (fieldNum < fieldFactories.length) {
-				return (ByteField) fieldFactories[fieldOffset].getField(index);
+				return (ByteField) fieldFactories[fieldNum].getField(index);
 			}
 		}
 		return null;

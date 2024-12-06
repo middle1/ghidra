@@ -25,6 +25,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import db.*;
 import generic.FilteredIterator;
+import ghidra.framework.data.OpenMode;
 import ghidra.program.database.DBObjectCache;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.database.code.CodeManager;
@@ -95,8 +96,7 @@ public class FunctionManagerDB implements FunctionManager {
 	 * Construct a new FunctionManager
 	 * @param dbHandle data base handle
 	 * @param addrMap address map for the program
-	 * @param openMode CREATE, UPDATE, READ_ONLY, or UPGRADE defined in
-	 * db.DBConstants
+	 * @param openMode CREATE, UPDATE, READ_ONLY, or UPGRADE
 	 * @param lock the program synchronization lock
 	 * @param monitor
 	 * @throws VersionException if function manager's version does not match
@@ -105,7 +105,7 @@ public class FunctionManagerDB implements FunctionManager {
 	 * and the user canceled the upgrade process
 	 * @throws IOException if there was a problem accessing the database
 	 */
-	public FunctionManagerDB(DBHandle dbHandle, AddressMap addrMap, int openMode, Lock lock,
+	public FunctionManagerDB(DBHandle dbHandle, AddressMap addrMap, OpenMode openMode, Lock lock,
 			TaskMonitor monitor) throws VersionException, CancelledException, IOException {
 		this.dbHandle = dbHandle;
 		this.addrMap = addrMap;
@@ -115,7 +115,7 @@ public class FunctionManagerDB implements FunctionManager {
 		functionTagManager = new FunctionTagManagerDB(dbHandle, openMode, lock, monitor);
 	}
 
-	private void initializeAdapters(int openMode, TaskMonitor monitor)
+	private void initializeAdapters(OpenMode openMode, TaskMonitor monitor)
 			throws VersionException, CancelledException, IOException {
 		try {
 			FunctionAdapter oldAdapter = FunctionAdapter.findReadOnlyAdapter(dbHandle, addrMap);
@@ -220,10 +220,13 @@ public class FunctionManagerDB implements FunctionManager {
 		}
 	}
 
-	static void checkSingleAddressSpaceOnly(AddressSetView set) {
-		if (set.getMinAddress().getAddressSpace() != set.getMaxAddress().getAddressSpace()) {
-			throw new IllegalArgumentException(
-				"Function body must contain single address space only");
+	static void checkSingleAddressSpaceOnly(AddressSetView set) throws IllegalArgumentException {
+		AddressSpace addressSpace = set.getMinAddress().getAddressSpace();
+		for (AddressRange range : set.getAddressRanges()) {
+			if (range.getMinAddress().getAddressSpace() != addressSpace) {
+				throw new IllegalArgumentException(
+					"Function body must contain single address space only");
+			}
 		}
 	}
 
@@ -563,8 +566,8 @@ public class FunctionManagerDB implements FunctionManager {
 	}
 
 	@Override
-	public FunctionIterator getFunctions(Address start, boolean foward) {
-		return new FunctionIteratorDB(start, foward);
+	public FunctionIterator getFunctions(Address start, boolean forward) {
+		return new FunctionIteratorDB(start, forward);
 	}
 
 	@Override
@@ -585,8 +588,8 @@ public class FunctionManagerDB implements FunctionManager {
 	}
 
 	@Override
-	public FunctionIterator getFunctionsNoStubs(Address start, boolean foward) {
-		return new FunctionFilteredIterator(new FunctionIteratorDB(start, foward));
+	public FunctionIterator getFunctionsNoStubs(Address start, boolean forward) {
+		return new FunctionFilteredIterator(new FunctionIteratorDB(start, forward));
 	}
 
 	@Override
@@ -647,10 +650,10 @@ public class FunctionManagerDB implements FunctionManager {
 	}
 
 	@Override
-	public void programReady(int openMode, int currentRevision, TaskMonitor monitor)
+	public void programReady(OpenMode openMode, int currentRevision, TaskMonitor monitor)
 			throws IOException, CancelledException {
 
-		if (openMode == DBConstants.UPGRADE) {
+		if (openMode == OpenMode.UPGRADE) {
 			upgradeAllDotDotDots(monitor);
 		}
 	}

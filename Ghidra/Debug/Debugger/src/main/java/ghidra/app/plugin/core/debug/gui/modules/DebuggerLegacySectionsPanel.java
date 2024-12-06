@@ -48,24 +48,21 @@ public class DebuggerLegacySectionsPanel extends JPanel {
 
 	protected static Set<TraceModule> getSelectedModulesFromContext(
 			DebuggerSectionActionContext context) {
-		return context.getSelectedSections()
+		return context.getSelectedSections(false)
 				.stream()
 				.map(r -> r.getModule())
 				.collect(Collectors.toSet());
 	}
 
 	protected static Set<TraceSection> getSelectedSectionsFromContext(
-			DebuggerSectionActionContext context) {
-		return context.getSelectedSections()
-				.stream()
-				.map(r -> r.getSection())
-				.collect(Collectors.toSet());
+			DebuggerSectionActionContext context, boolean allowExpansion) {
+		return context.getSelectedSections(allowExpansion);
 	}
 
 	protected static AddressSetView getSelectedAddressesFromContext(
 			DebuggerSectionActionContext context) {
 		AddressSet sel = new AddressSet();
-		for (TraceSection section : getSelectedSectionsFromContext(context)) {
+		for (TraceSection section : getSelectedSectionsFromContext(context, false)) {
 			sel.add(section.getRange());
 		}
 		return sel;
@@ -276,8 +273,8 @@ public class DebuggerLegacySectionsPanel extends JPanel {
 			int selectedRow = sectionTable.getSelectedRow();
 			int selectedColumn = sectionTable.getSelectedColumn();
 			Object value = sectionTable.getValueAt(selectedRow, selectedColumn);
-			if (value instanceof Address) {
-				provider.listingService.goTo((Address) value, true);
+			if (value instanceof Address address) {
+				provider.listingService.goTo(address, true);
 			}
 		}
 	}

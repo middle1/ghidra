@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,6 +18,7 @@ package ghidra.program.database.data;
 import java.io.IOException;
 
 import db.*;
+import ghidra.framework.data.OpenMode;
 import ghidra.util.UniversalID;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.VersionException;
@@ -53,9 +54,9 @@ abstract class EnumDBAdapter {
 	 * @throws IOException if there is trouble accessing the database.
 	 * @throws CancelledException if task cancelled
 	 */
-	static EnumDBAdapter getAdapter(DBHandle handle, int openMode, String tablePrefix,
+	static EnumDBAdapter getAdapter(DBHandle handle, OpenMode openMode, String tablePrefix,
 			TaskMonitor monitor) throws VersionException, IOException, CancelledException {
-		if (openMode == DBConstants.CREATE) {
+		if (openMode == OpenMode.CREATE) {
 			return new EnumDBAdapterV1(handle, tablePrefix, true);
 		}
 		try {
@@ -63,7 +64,7 @@ abstract class EnumDBAdapter {
 		}
 		catch (VersionException e) {
 			EnumDBAdapter adapter = findReadOnlyAdapter(handle);
-			if (openMode == DBConstants.UPGRADE) {
+			if (openMode == OpenMode.UPGRADE) {
 				adapter = upgrade(handle, adapter, tablePrefix, monitor);
 			}
 			return adapter;
@@ -96,7 +97,7 @@ abstract class EnumDBAdapter {
 	 * @param tablePrefix prefix to be used with default table name
 	 * @param monitor task monitor
 	 * @return the adapter for the new upgraded version of the table.
-	 * @throws VersionException if the the table's version does not match the expected version
+	 * @throws VersionException if the table's version does not match the expected version
 	 * for this adapter.
 	 * @throws IOException if the database can't be read or written.
 	 * @throws CancelledException if task cancelled

@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,6 +32,7 @@ import generic.stl.Pair;
 import ghidra.app.plugin.core.datamgr.archive.BuiltInSourceArchive;
 import ghidra.docking.settings.*;
 import ghidra.framework.Application;
+import ghidra.framework.data.OpenMode;
 import ghidra.framework.model.RuntimeIOException;
 import ghidra.framework.store.db.PackedDBHandle;
 import ghidra.framework.store.db.PackedDatabase;
@@ -229,15 +230,15 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		try {
 			dbHandle = new DBHandle();
 			readOnlyMode = false;
-			int id = startTransaction("");
+			long txId = dbHandle.startTransaction();
 			try {
-				init(DBConstants.CREATE, TaskMonitor.DUMMY);
+				init(OpenMode.CREATE, TaskMonitor.DUMMY);
 			}
 			catch (VersionException | CancelledException e) {
 				throw new AssertException(e); // unexpected
 			}
 			finally {
-				endTransaction(id, true);
+				dbHandle.endTransaction(txId, true);
 			}
 		}
 		catch (IOException e) {
@@ -251,23 +252,22 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	 * NOTE: Default DataOrganization will be used for new archive.
 	 * 
 	 * @param packedDBfile packed datatype archive file (i.e., *.gdt resource).
-	 * @param openMode     open mode CREATE, READ_ONLY or UPDATE (see
-	 *                     {@link DBConstants}).
+	 * @param openMode     open mode CREATE, READ_ONLY or UPDATE 
 	 * @param monitor task monitor
 	 * @throws IOException a low-level IO error. This exception may also be thrown
 	 *                     when a version error occurs (cause is VersionException).
 	 * @throws CancelledException if task cancelled
 	 */
-	protected DataTypeManagerDB(ResourceFile packedDBfile, int openMode, TaskMonitor monitor)
+	protected DataTypeManagerDB(ResourceFile packedDBfile, OpenMode openMode, TaskMonitor monitor)
 			throws IOException, CancelledException {
 
 		this.errHandler = new DbErrorHandler();
 		this.lock = new Lock("DataTypeManagerDB");
 		this.tablePrefix = "";
-		this.readOnlyMode = (openMode == DBConstants.READ_ONLY);
+		this.readOnlyMode = (openMode == OpenMode.IMMUTABLE);
 
 		File file = packedDBfile.getFile(false);
-		if (file == null && openMode != DBConstants.READ_ONLY) {
+		if (file == null && openMode != OpenMode.IMMUTABLE) {
 			throw new IOException("Unsupported mode (" + openMode +
 				") for read-only Datatype Archive: " + packedDBfile.getAbsolutePath());
 		}
@@ -276,14 +276,14 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		boolean openSuccess = false;
 		PackedDatabase pdb = null;
 		try {
-			if (openMode == DBConstants.CREATE) {
+			if (openMode == OpenMode.CREATE) {
 				dbHandle = new PackedDBHandle(
 					DataTypeArchiveContentHandler.DATA_TYPE_ARCHIVE_CONTENT_TYPE);
 			}
 			else {
 				pdb = PackedDatabase.getPackedDatabase(packedDBfile, false, monitor);
 
-				if (openMode == DBConstants.READ_ONLY) {
+				if (openMode == OpenMode.IMMUTABLE) {
 					dbHandle = pdb.open(monitor);
 				}
 				else { // UPDATE mode (allows upgrade use)
@@ -302,7 +302,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		boolean initSuccess = false;
 		try {
 			initPackedDatabase(packedDBfile, openMode, monitor); // performs upgrade if needed
-			if (openMode == DBConstants.CREATE) {
+			if (openMode == OpenMode.CREATE) {
 				// preserve UniversalID if it has been established
 				Long uid = universalID != null ? universalID.getValue() : null;
 				((PackedDBHandle) dbHandle).saveAs("Archive", file.getParentFile(),
@@ -317,17 +317,18 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		}
 	}
 
-	private void initPackedDatabase(ResourceFile packedDBfile, int openMode, TaskMonitor monitor)
-			throws CancelledException, IOException {
-		try (Transaction tx = openTransaction("")) {
+	private void initPackedDatabase(ResourceFile packedDBfile, OpenMode openMode,
+			TaskMonitor monitor) throws CancelledException, IOException {
+		Long txId = dbHandle.startTransaction();
+		try {
 			init(openMode, monitor);
 
-			if (openMode != DBConstants.CREATE && hasDataOrganizationChange(true)) {
+			if (openMode != OpenMode.CREATE && hasDataOrganizationChange(true)) {
 				// check for data organization change with possible upgrade
 				handleDataOrganizationChange(openMode, monitor);
 			}
 
-			if (openMode == DBConstants.UPGRADE) {
+			if (openMode == OpenMode.UPGRADE) {
 				migrateOldFlexArrayComponentsIfRequired(monitor);
 
 				Msg.showInfo(this, null, "Archive Upgraded",
@@ -335,12 +336,20 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 			}
 		}
 		catch (VersionException e) {
-			if (openMode == DBConstants.UPDATE && e.isUpgradable()) {
-				initPackedDatabase(packedDBfile, DBConstants.UPGRADE, monitor);
+			if (openMode == OpenMode.UPDATE && e.isUpgradable()) {
+				// Try again with UPGRADE mode
+				dbHandle.endTransaction(txId, true);
+				txId = null;
+				initPackedDatabase(packedDBfile, OpenMode.UPGRADE, monitor);
 			}
 			else {
 				// Unable to handle required upgrade
 				throw new IOException(e);
+			}
+		}
+		finally {
+			if (txId != null) {
+				dbHandle.endTransaction(txId, true);
 			}
 		}
 	}
@@ -353,7 +362,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	 * 
 	 * @param handle     database handle
 	 * @param addrMap    address map (may be null)
-	 * @param openMode   open mode CREATE, READ_ONLY, UPDATE, UPGRADE (see {@link DBConstants}).
+	 * @param openMode   open mode CREATE, READ_ONLY, UPDATE, UPGRADE.
 	 * @param tablePrefix DB table prefix to be applied to all associated table names.  This 
 	 *                    need only be specified when using multiple instances with the same
 	 *                    DB handle (null or empty string for no-prefix).
@@ -365,19 +374,19 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	 * @throws VersionException if any database handle's version doesn't match the expected version.
 	 *                   This exception will never be thrown in READ_ONLY mode.
 	 */
-	protected DataTypeManagerDB(DBHandle handle, AddressMap addrMap, int openMode,
+	protected DataTypeManagerDB(DBHandle handle, AddressMap addrMap, OpenMode openMode,
 			String tablePrefix, ErrorHandler errHandler, Lock lock, TaskMonitor monitor)
 			throws CancelledException, IOException, VersionException {
 		this.tablePrefix = tablePrefix != null ? tablePrefix : "";
 		this.dbHandle = handle;
-		this.readOnlyMode = (openMode == DBConstants.READ_ONLY);
+		this.readOnlyMode = (openMode == OpenMode.IMMUTABLE);
 		this.addrMap = addrMap;
 		this.errHandler = errHandler;
 		this.lock = lock;
 		init(openMode, monitor);
 	}
 
-	private void init(int openMode, TaskMonitor monitor)
+	private void init(OpenMode openMode, TaskMonitor monitor)
 			throws CancelledException, IOException, VersionException {
 		updateID();
 		initializeAdapters(openMode, monitor);
@@ -394,7 +403,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		}
 	}
 
-	private void initializeAdapters(int openMode, TaskMonitor monitor)
+	private void initializeAdapters(OpenMode openMode, TaskMonitor monitor)
 			throws CancelledException, IOException, VersionException {
 
 		//
@@ -522,23 +531,23 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	/**
 	 * Initialize other DB adapters after base implementation adapters has been
 	 * initialized.
-	 * @param openMode the DB open mode (see {@link DBConstants})
+	 * @param openMode the DB open mode
 	 * @param monitor the progress monitor
 	 * @throws CancelledException if the user cancels an upgrade
 	 * @throws VersionException if the database does not match the expected version.
 	 * @throws IOException if a database IO error occurs.
 	 */
-	protected void initializeOtherAdapters(int openMode, TaskMonitor monitor)
+	protected void initializeOtherAdapters(OpenMode openMode, TaskMonitor monitor)
 			throws CancelledException, IOException, VersionException {
 		// do nothing
 	}
 
-	protected void handleDataOrganizationChange(int openMode, TaskMonitor monitor)
+	protected void handleDataOrganizationChange(OpenMode openMode, TaskMonitor monitor)
 			throws IOException, LanguageVersionException, CancelledException {
-		if (openMode == DBConstants.UPDATE) {
+		if (openMode == OpenMode.UPDATE) {
 			throw new LanguageVersionException("Data organization change detected", true);
 		}
-		if (openMode == DBConstants.UPGRADE) {
+		if (openMode == OpenMode.UPGRADE) {
 			compilerSpecChanged(monitor);
 		}
 		// NOTE: No change for READ_ONLY mode
@@ -591,33 +600,33 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	 * @throws VersionException if database is a newer unsupported version
 	 * @throws IOException if an IO error occurs
 	 */
-	private void checkManagerVersion(int openMode) throws IOException, VersionException {
+	private void checkManagerVersion(OpenMode openMode) throws IOException, VersionException {
 
-		if (openMode == DBConstants.CREATE) {
+		if (openMode == OpenMode.CREATE) {
 			return;
 		}
 
 		// Check data map for overall manager version for compatibility.
-		DBStringMapAdapter dataMap = getDataMap(openMode == DBConstants.UPGRADE);
+		DBStringMapAdapter dataMap = getDataMap(openMode == OpenMode.UPGRADE);
 		if (dataMap != null) {
 			// verify that we are compatible with stored data
 			int dbVersion = dataMap.getInt(DTM_DB_VERSION_KEY, 1);
 			if (dbVersion > DB_VERSION) {
 				throw new VersionException(false);
 			}
-			if (dbVersion < DB_VERSION && openMode == DBConstants.UPDATE) {
+			if (dbVersion < DB_VERSION && openMode == OpenMode.UPDATE) {
 				// Force upgrade if open for update
 				throw new VersionException(true);
 			}
 		}
-		else if (openMode == DBConstants.UPDATE) {
+		else if (openMode == OpenMode.UPDATE) {
 			// missing data map
 			throw new VersionException(true);
 		}
 	}
 
-	private void updateManagerAndAppVersion(int openMode) throws IOException {
-		if (openMode == DBConstants.CREATE || openMode == DBConstants.UPGRADE) {
+	private void updateManagerAndAppVersion(OpenMode openMode) throws IOException {
+		if (openMode == OpenMode.CREATE || openMode == OpenMode.UPGRADE) {
 			DBStringMapAdapter dataMap = getDataMap(true);
 			dataMap.put(DTM_DB_VERSION_KEY, Integer.toString(DB_VERSION));
 			dataMap.put(DTM_GHIDRA_VERSION_KEY, Application.getApplicationVersion());
@@ -951,6 +960,15 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		return dbHandle.isTransactionActive();
 	}
 
+	/**
+	 * This method should be invoked following an undo/redo or a transaction rollback situation.
+	 * This will notify {@link DataTypeManagerChangeListenerHandler} and its listeners that this 
+	 * manager has just been restored (e.g., undo/redo/rollback).
+	 */
+	public void notifyRestored() {
+		defaultListener.restored(this);
+	}
+
 	abstract protected String getDomainFileID();
 
 	abstract protected String getPath();
@@ -1091,11 +1109,6 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		}
 	}
 
-	ConflictResult resolveConflict(DataTypeConflictHandler handler, DataType addedDataType,
-			DataType existingDataType) {
-		return handler.resolveConflict(addedDataType, existingDataType);
-	}
-
 	@Override
 	public String getUniqueName(CategoryPath path, String baseName) {
 		int pos = baseName.lastIndexOf('_');
@@ -1119,7 +1132,8 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		return name;
 	}
 
-	String getUniqueName(CategoryPath path1, CategoryPath path2, String baseName) {
+	String getTemporaryUniqueName(CategoryPath newCategoryPath, CategoryPath currentCategoryPath,
+			String baseName) {
 		int pos = baseName.lastIndexOf('_');
 		int oneUpNumber = 0;
 		String name = baseName;
@@ -1134,7 +1148,8 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 				// the number will get updated below
 			}
 		}
-		while (getDataType(path1, name) != null || getDataType(path2, name) != null) {
+		while (getDataType(newCategoryPath, name) != null ||
+			getDataType(currentCategoryPath, name) != null) {
 			++oneUpNumber;
 			name = baseName + "_" + oneUpNumber;
 		}
@@ -1252,8 +1267,9 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 					resolvedDataType = resolveDataTypeNoSource(dataType);
 				}
 				else if (!sourceArchive.getSourceArchiveID().equals(getUniversalID()) &&
-					sourceArchive.getArchiveType() == ArchiveType.PROGRAM) {
-					// dataTypes from a different program don't carry over their identity.
+					(sourceArchive.getArchiveType() == ArchiveType.PROGRAM ||
+						sourceArchive.getArchiveType() == ArchiveType.TEMPORARY)) {
+					// dataTypes from a program or temporary archive don't carry over their identity
 					resolvedDataType = resolveDataTypeNoSource(dataType);
 				}
 				else {
@@ -1428,47 +1444,72 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 
 	/**
 	 * This method gets a ".conflict" name that is not currently used by any data
-	 * types in the indicated category of the data type manager.
+	 * types in the datatype's category within this data type manager.  If the baseName without
+	 * conflict suffix is not used that name will be returned.
+	 * <br>
+	 * NOTE: The original datatype name will be returned unchanged for pointers and arrays since 
+	 * they cannot be renamed.
+	 * 
 	 * @param dt datatype who name is used to establish non-conflict base name
 	 * @return the unused conflict name or original name for datatypes whose name is automatic
 	 */
 	public String getUnusedConflictName(DataType dt) {
-		String name = dt.getName();
-		if ((dt instanceof Array) || (dt instanceof Pointer) || (dt instanceof BuiltInDataType)) {
-			// name not used - anything will do
-			return name;
-		}
-		return getUnusedConflictName(dt.getCategoryPath(), name);
+		return getUnusedConflictName(dt.getCategoryPath(), dt);
 	}
 
 	/**
 	 * This method gets a ".conflict" name that is not currently used by any data
-	 * types in the indicated category of the data type manager.
+	 * types in the indicated category within this data type manager.  If the baseName without
+	 * conflict suffix is not used that name will be returned.
+	 * <br>
+	 * NOTE: The original datatype name will be returned unchanged for pointers and arrays since 
+	 * they cannot be renamed.
+	 * <br>
+	 * NOTE: Otherwise, if category does not exist the non-conflict name will be returned.
 	 * 
 	 * @param path the category path of the category where the new data type live in
 	 *             the data type manager.
-	 * @param name The name of the data type. This name may or may not contain
-	 *             ".conflict" as part of it. If the name contains ".conflict", only
-	 *             the part of the name that comes prior to the ".conflict" will be
-	 *             used to determine a new unused conflict name.
+	 * @param dt datatype who name is used to establish non-conflict base name
 	 * @return the unused conflict name
 	 */
-	public String getUnusedConflictName(CategoryPath path, String name) {
-		int index = name.indexOf(DataType.CONFLICT_SUFFIX);
-		if (index > 0) {
-			name = name.substring(0, index);
+	public String getUnusedConflictName(CategoryPath path, DataType dt) {
+		if ((dt instanceof Array) || (dt instanceof Pointer) || (dt instanceof BuiltInDataType)) {
+			// name not used - anything will do
+			return dt.getName();
 		}
-		// Name sequence: <baseName>, <baseName>.conflict, <basename>.conflict1, ...
+		return getUnusedConflictName(getCategory(path), dt);
+	}
 
-		String baseName = name + DataType.CONFLICT_SUFFIX;
-		String testName = name;
+	/**
+	 * This method gets a ".conflict" name that is not currently used by any data
+	 * types in the indicated category within this data type manager.  If the baseName without
+	 * conflict suffix is not used that name will be returned.
+	 * <br>
+	 * NOTE: The original datatype name will be returned unchanged for pointers and arrays since 
+	 * they cannot be renamed.
+	 * <br>
+	 * NOTE: Otherwise, if category does not exist the non-conflict name will be returned.
+	 * 
+	 * @param cat the existing category to check.
+	 * @param dt datatype who name is used to establish non-conflict base name
+	 * @return the unused conflict name
+	 */
+	private String getUnusedConflictName(Category cat, DataType dt) {
+		if ((dt instanceof Array) || (dt instanceof Pointer) || (dt instanceof BuiltInDataType)) {
+			// name not used - anything will do
+			return dt.getName();
+		}
+		String baseName = DataTypeUtilities.getNameWithoutConflict(dt);
+		if (cat == null) {
+			return baseName;
+		}
+		String testName = baseName;
 		int count = 0;
-		while (getDataType(path, testName) != null) {
-			String countSuffix = "";
-			if (count != 0) {
-				countSuffix = Integer.toString(count);
+		while (cat.getDataType(testName) != null) {
+			testName = baseName + DataType.CONFLICT_SUFFIX;
+			if (count > 0) {
+				testName += Integer.toString(count);
 			}
-			testName = baseName + countSuffix;
 			++count;
 		}
 		return testName;
@@ -1652,8 +1693,12 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		// (preference is given to similar kind of datatype when checking existing conflict types)
 		DataType existingDataType = findDataTypeSameLocation(dataType);
 		if (existingDataType == null) {
-			return createDataType(dataType, getUnusedConflictName(dataType), sourceArchive,
-				currentHandler);
+			// create non-existing datatype - keep original name unless it is already used
+			String name = dataType.getName();
+			if (getDataType(dataType.getCategoryPath(), name) != null) {
+				name = getUnusedConflictName(dataType);
+			}
+			return createDataType(dataType, name, sourceArchive, currentHandler);
 		}
 
 		// So we have a dataType with the same path and name, but not equivalent, so use
@@ -2269,7 +2314,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		if (id <= 0) { // removal of certain special types not permitted
 			return false;
 		}
-		idsToDelete.add(Long.valueOf(id));
+		idsToDelete.add(id);
 		removeQueuedDataTypes();
 		return true;
 	}
@@ -2431,6 +2476,11 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 	 * @param replacementDataType datatype which is the replacement
 	 */
 	protected void addDataTypeToReplace(DataType oldDataType, DataType replacementDataType) {
+		Objects.requireNonNull(oldDataType);
+		Objects.requireNonNull(replacementDataType);
+		if (oldDataType == replacementDataType) {
+			throw new AssertionError("Invalid datatype replacement pair");
+		}
 		typesToReplace.add(new Pair<>(oldDataType, replacementDataType));
 	}
 
@@ -3084,8 +3134,9 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 
 			structDB.doReplaceWith(struct, false);
 
-			// doReplaceWith may have updated the last change time so set it back to what we want.
-			structDB.setLastChangeTime(struct.getLastChangeTime());
+			// doReplaceWith may have updated the last change time so set it back to what we want
+			// without triggering change notification
+			structDB.doSetLastChangeTime(struct.getLastChangeTime());
 
 			return structDB;
 		}
@@ -3113,6 +3164,10 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		if (isAutoNamed) {
 			flags = (short) TypedefDBAdapter.TYPEDEF_FLAG_AUTONAME;
 			cat = getCategory(dataType.getCategoryPath()); // force category
+		}
+		else if (cat.getDataType(name) != null) {
+			// force use of conflict name if needed
+			name = getUnusedConflictName(cat, typedef);
 		}
 		DBRecord record = typedefAdapter.createRecord(getID(dataType), name, flags, cat.getID(),
 			sourceArchiveIdValue, universalIdValue, typedef.getLastChangeTime());
@@ -3148,8 +3203,9 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 
 			unionDB.doReplaceWith(union, false);
 
-			// doReplaceWith updated the last change time so set it back to what we want.
-			unionDB.setLastChangeTime(union.getLastChangeTime());
+			// doReplaceWith may have updated the last change time so set it back to what we want
+			// without triggering change notification
+			unionDB.doSetLastChangeTime(union.getLastChangeTime());
 
 			return unionDB;
 		}
@@ -3667,7 +3723,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		}
 	}
 
-	void removeParentChildRecord(long parentID, long childID) {
+	protected void removeParentChildRecord(long parentID, long childID) {
 
 		if (isBulkRemoving) {
 			// we are in the process of bulk removing the given child; no need to call
@@ -3681,6 +3737,26 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		catch (IOException e) {
 			dbError(e);
 		}
+	}
+
+	protected Set<Long> getChildIds(long parentID) {
+		try {
+			return parentChildAdapter.getChildIds(parentID);
+		}
+		catch (IOException e) {
+			dbError(e);
+		}
+		return Set.of();
+	}
+
+	protected boolean hasParent(long childID) {
+		try {
+			return parentChildAdapter.hasParent(childID);
+		}
+		catch (IOException e) {
+			dbError(e);
+		}
+		return false;
 	}
 
 	List<DataType> getParentDataTypes(long dataTypeId) {
@@ -4190,9 +4266,9 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 		return null;
 	}
 
-	private boolean checkForSourceArchiveUpdatesNeeded(int openMode, TaskMonitor monitor)
+	private boolean checkForSourceArchiveUpdatesNeeded(OpenMode openMode, TaskMonitor monitor)
 			throws IOException, CancelledException {
-		if (openMode == DBConstants.CREATE || openMode == DBConstants.READ_ONLY) {
+		if (openMode == OpenMode.CREATE || openMode == OpenMode.IMMUTABLE) {
 			return false;
 		}
 		List<DBRecord> records = sourceArchiveAdapter.getRecords();
@@ -4389,7 +4465,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 			if (dataType instanceof Pointer || dataType instanceof Array) {
 				dataType = DataTypeUtilities.getBaseDataType(dataType);
 			}
-			if (!contains(dataType)) {
+			if (dataType == null || !contains(dataType)) {
 				return false;
 			}
 			List<DataType> relatedByName = findDataTypesSameLocation(dataType);
@@ -4503,7 +4579,7 @@ abstract public class DataTypeManagerDB implements DataTypeManager {
 			if (dt instanceof Pointer || dt instanceof Array) {
 				continue;
 			}
-			boolean isConflict = dt.getName().contains(DataType.CONFLICT_SUFFIX);
+			boolean isConflict = DataTypeUtilities.isConflictDataType(dt);
 			String name = DataTypeUtilities.getNameWithoutConflict(dt, false);
 			if (!name.equals(lastBaseName)) {
 				// base name changed

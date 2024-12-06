@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -61,6 +61,22 @@ public @interface FieldMapping {
 	 * required
 	 */
 	boolean optional() default false;
+
+	/**
+	 * Marks this field as only present in certain context configurations.
+	 * <p>
+	 * The specified string is interpreted by the specific {@link DataTypeMapper} and its
+	 * {@link DataTypeMapperContext context}.
+	 * <p>
+	 * For example, a version number could be used to allow some optional fields to be skipped
+	 * depending on the concrete {@link DataTypeMapper}'s information during structure
+	 * mapping registration.
+	 * <p>
+	 * Similar to {@link #optional()}
+	 * 
+	 * @return String
+	 */
+	String presentWhen() default "";
 
 	/**
 	 * Specifies the name of a setter method that will be used to assign the deserialized value
