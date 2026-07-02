@@ -91,8 +91,17 @@ public class GTableHeaderRenderer extends DefaultTableCellRenderer {
 		primaryIcon = getIcon(model, modelIndex);
 		helpIcon = getHelpIcon(table, column);
 
+		// The prevents accessibility from reading the table header text when the header is clipped
+		// in between the row and column numbers, which looks confusing and is inconsistent.
+		// We override getToolTipText() on the header which allows us to customize the tool tip
+		// for the headers as needed. Setting this to the empty string overrides the client property
+		// for tool tips, which is what the accessibility api uses.  The GUI tool tip is retrieved
+		// from the getToolTipText() method.
+		putClientProperty(TOOL_TIP_TEXT_KEY, "");
+
 		return this;
 	}
+
 
 	@Override
 	public void setBounds(int x, int y, int w, int h) {
@@ -101,14 +110,38 @@ public class GTableHeaderRenderer extends DefaultTableCellRenderer {
 	}
 
 	@Override
+	public void validate() {
+		super.validate();
+
+		if (rendererComponent != null) {
+			rendererComponent.validate();
+		}
+	}
+
+	@Override
 	public void paint(Graphics g) {
 
 		updateClipping();
 
+		// Note: we should not have to set the colors here.  That is usually done by the renderer
+		// when getTableCellRendererComponent() is called.  Some Lafs, like the FlatLaf will change
+		// colors when painting, after the renderer component has been configured.  To support that,
+		// we must update the colors here as well.  
+		rendererComponent.setBackground(getBackground());
+		rendererComponent.setForeground(getForeground());
+
+		// Our parent renderer pane will add us as a child.  Some Lafs, like Windows, need to be a
+		// child of the renderer pane to work correctly.
+		Container parent = getParent();
+		Container rendererParent = rendererComponent.getParent();
+		if (rendererParent != parent) {
+			parent.add(rendererComponent);
+		}
+
 		rendererComponent.paint(g);
 
 		// paint our items after the delegate call so that we paint on top
-		super.paint(g);
+		paintChildren(g);
 	}
 
 	private void updateClipping() {

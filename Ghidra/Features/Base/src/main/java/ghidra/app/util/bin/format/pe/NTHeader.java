@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -25,22 +25,18 @@ import ghidra.program.model.data.*;
 import ghidra.util.DataConverter;
 import ghidra.util.Msg;
 import ghidra.util.exception.DuplicateNameException;
-import ghidra.util.exception.NotYetImplementedException;
-import ghidra.util.task.TaskMonitor;
 
 /**
- * A class to represent the <b><code>IMAGE_NT_HEADERS32</code></b> and
- * IMAGE_NT_HEADERS64 structs as defined in
- * <code>winnt.h</code>.
- * <pre>
+ * A class to represent the {@code IMAGE_NT_HEADERS32} and {@code IMAGE_NT_HEADERS64} structs as 
+ * defined in {@code winnt.h}
+ * 
+ * <pre>{@code
  * typedef struct _IMAGE_NT_HEADERS {
  *    DWORD Signature;
  *    IMAGE_FILE_HEADER FileHeader;
  *    IMAGE_OPTIONAL_HEADER32 OptionalHeader;
  * };
- * </pre>
- *
- *
+ * }</pre>
  */
 public class NTHeader implements StructConverter, OffsetValidator {
 	/**
@@ -54,36 +50,33 @@ public class NTHeader implements StructConverter, OffsetValidator {
 	private OptionalHeader optionalHeader;
 	private BinaryReader reader;
 	private int index;
-	private boolean advancedProcess = true;
 	private boolean parseCliHeaders = false;
 
 	private SectionLayout layout = SectionLayout.FILE;
 
 	/**
 	 * Constructs a new NT header.
+	 * 
 	 * @param reader the binary reader
 	 * @param index the index into the reader to the start of the NT header
 	 * @param layout The {@link SectionLayout}
-	 * @param advancedProcess if true, information outside of the base header will be processed
 	 * @param parseCliHeaders if true, CLI headers are parsed (if present)
 	 * @throws InvalidNTHeaderException if the bytes the specified index
 	 * @throws IOException if an IO-related exception occurred
-	 * do not constitute an accurate NT header.
+	 *   do not constitute an accurate NT header.
 	 */
-	public NTHeader(BinaryReader reader, int index, SectionLayout layout, boolean advancedProcess,
-			boolean parseCliHeaders) throws InvalidNTHeaderException, IOException {
+	public NTHeader(BinaryReader reader, int index, SectionLayout layout, boolean parseCliHeaders)
+			throws InvalidNTHeaderException, IOException {
 		this.reader = reader;
 		this.index = index;
 		this.layout = layout;
-		this.advancedProcess = advancedProcess;
 		this.parseCliHeaders = parseCliHeaders;
 
 		parse();
 	}
 
 	/**
-	 * Returns the name to use when converting into a structure data type.
-	 * @return the name to use when converting into a structure data type
+	 * {@return the name to use when converting into a structure data type}
 	 */
 	public String getName() {
 		return "IMAGE_NT_HEADERS" + (optionalHeader.is64bit() ? "64" : "32");
@@ -94,24 +87,19 @@ public class NTHeader implements StructConverter, OffsetValidator {
 	}
 
 	/**
-	 * Returns the file header.
-	 * @return the file header
+	 * {@return the file header}
 	 */
 	public FileHeader getFileHeader() {
 		return fileHeader;
 	}
 
 	/**
-	 * Returns the optional header.
-	 * @return the optional header
+	 * {@return the optional header}
 	 */
 	public OptionalHeader getOptionalHeader() {
 		return optionalHeader;
 	}
 
-	/**
-	 * @see ghidra.app.util.bin.StructConverter#toDataType()
-	 */
 	@Override
 	public DataType toDataType() throws DuplicateNameException, IOException {
 		StructureDataType struct = new StructureDataType(getName(), 0);
@@ -126,20 +114,20 @@ public class NTHeader implements StructConverter, OffsetValidator {
 	}
 
 	/**
-	 * Converts a relative virtual address (RVA) into a pointer.
+	 * {@return the given relative virtual address (RVA) converted into a pointer into the binary
+	 * image, or -1 if not valid}
 	 * 
 	 * @param rva the relative virtual address
-	 * @return the pointer into binary image, 0 if not valid
 	 */
 	public int rvaToPointer(int rva) {
 		return (int) rvaToPointer(Integer.toUnsignedLong(rva));
 	}
 
 	/**
-	 * Converts a relative virtual address (RVA) into a pointer.
+	 * {@return the given relative virtual address (RVA) converted into a pointer into the binary
+	 * image, or -1 if not valid}
 	
 	 * @param rva the relative virtual address
-	 * @return the pointer into binary image, -1 if not valid
 	 */
 	public long rvaToPointer(long rva) {
 		SectionHeader[] sections = fileHeader.getSectionHeaders();
@@ -217,31 +205,26 @@ public class NTHeader implements StructConverter, OffsetValidator {
 	}
 
 	/**
-	 * Converts a virtual address (VA) into a pointer.
+	 * {@return the given virtual address (VA) converted into a pointer into the binary
+	 * image, or -1 if not valid}
 	 * 
 	 * @param va the virtual address
-	 * @return the pointer into binary image, 0 if not valid
 	 */
 	public int vaToPointer(int va) {
 		return (int) vaToPointer(Integer.toUnsignedLong(va));
 	}
 
 	/**
-	 * Converts a virtual address (VA) into a pointer.
+	 * {@return the given virtual address (VA) converted into a pointer into the binary
+	 * image, or -1 if not valid}
 	 * 
 	 * @param va the virtual address
-	 * @return the pointer into binary image, 0 if not valid
 	 */
 	public long vaToPointer(long va) {
 		return rvaToPointer(va - getOptionalHeader().getImageBase());
 	}
 
 	private void parse() throws InvalidNTHeaderException, IOException {
-
-		if (index < 0 || index > reader.length()) {
-			return;
-		}
-
 		int tmpIndex = index;
 
 		try {
@@ -264,14 +247,7 @@ public class NTHeader implements StructConverter, OffsetValidator {
 		}
 		tmpIndex += FileHeader.IMAGE_SIZEOF_FILE_HEADER;
 
-		// Process Optional Header.  Abort load on failure.
-		try {
-			optionalHeader = new OptionalHeaderImpl(this, reader, tmpIndex);
-		}
-		catch (NotYetImplementedException e) {//TODO
-			Msg.error(this, "Unexpected Exception: " + e.getMessage());
-			return;
-		}
+		optionalHeader = new OptionalHeader(this, reader, tmpIndex);
 
 		// Process symbols.  Allow parsing to continue on failure.
 		boolean symbolsProcessed = false;
@@ -286,12 +262,6 @@ public class NTHeader implements StructConverter, OffsetValidator {
 		// Process sections.  Resolving some sections names (i.e., "/21") requires symbols to have
 		// been successfully processed.  Resolving is optional though.
 		fileHeader.processSections(optionalHeader, symbolsProcessed);
-
-		// Perform advanced processing.  If advanced processing is disabled, these things may be
-		// independently parsed later in the load if they are needed.
-		if (advancedProcess) {
-			optionalHeader.processDataDirectories(TaskMonitor.DUMMY);
-		}
 	}
 
 	void writeHeader(RandomAccessFile raf, DataConverter dc) throws IOException {

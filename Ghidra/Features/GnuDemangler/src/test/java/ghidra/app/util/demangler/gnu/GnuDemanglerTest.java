@@ -26,8 +26,9 @@ import generic.test.AbstractGenericTest;
 import ghidra.app.util.demangler.*;
 import ghidra.program.database.ProgramDB;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.TerminatedStringDataType;
-import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.symbol.*;
 import ghidra.test.ToyProgramBuilder;
@@ -133,6 +134,60 @@ public class GnuDemanglerTest extends AbstractGenericTest {
 	}
 
 	@Test
+	public void testUseStandardReplacements2() throws Exception {
+
+		// 
+		// Mangled: _ZN7Greeter5greetENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+		//
+		// Demangled: undefined Greeter::greet(std::__cxx11::basic_string<char,std::char_traits<char>,std::allocator<char>>)
+		//
+		// Replaced: undefined Greeter::greet(std::string)
+		//
+		String mangled = "_ZN7Greeter5greetENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE";
+
+		GnuDemangler demangler = new GnuDemangler();
+		demangler.canDemangle(program);// this perform initialization
+
+		GnuDemanglerOptions options = new GnuDemanglerOptions();
+		options.setUseStandardReplacements(true);
+		DemangledFunction dobj = (DemangledFunction) demangler.demangle(mangled, options);
+		assertNotNull(dobj);
+
+		String signature = dobj.getSignature();
+		assertEquals("undefined Greeter::greet(std::__cxx11::string)", signature);
+
+		DemangledParameter demangledParameter = dobj.getParameters().get(0);
+		DemangledDataType type = demangledParameter.getType();
+		DataType dt = type.getDataType(program.getDataTypeManager());
+		assertTrue(dt.isNotYetDefined());
+		//@formatter:off
+		assertEquals("/Demangler/std/__cxx11/string\n" + 
+			"pack(disabled)\n" + 
+			"Structure string {\n" + 
+			"}\n" + 
+			"Length: 0 Alignment: 1\n", dt.toString());
+		//@formatter:on
+
+		//
+		// Now disable demangled string replacement
+		// 
+		options.setUseStandardReplacements(false);
+		dobj = (DemangledFunction) demangler.demangle(mangled, options);
+		assertNotNull(dobj);
+
+		String fullSignature = dobj.getSignature();
+		assertEquals(
+			"undefined Greeter::greet(std::__cxx11::basic_string<char,std::char_traits<char>,std::allocator<char>>)",
+			fullSignature);
+
+		demangledParameter = dobj.getParameters().get(0);
+		type = demangledParameter.getType();
+		dt = type.getDataType(program.getDataTypeManager());
+		assertEquals("typedef basic_string undefined", dt.toString());
+
+	}
+
+	@Test
 	public void testDemangleOnlyKnownPatterns_True() throws Exception {
 
 		String mangled = "abracadabra_hocus_pocus";
@@ -171,7 +226,7 @@ public class GnuDemanglerTest extends AbstractGenericTest {
 		assertEquals("AP_HAL::HAL::Callbacks", s.getParentNamespace().getName(true));
 
 		assertEquals("typeinfo for AP_HAL::HAL::Callbacks",
-			program.getListing().getComment(CodeUnit.PLATE_COMMENT, addr("01001000")));
+			program.getListing().getComment(CommentType.PLATE, addr("01001000")));
 
 		Data d = program.getListing().getDefinedDataAt(addr("01001000"));
 		assertNotNull(d);
@@ -204,7 +259,7 @@ public class GnuDemanglerTest extends AbstractGenericTest {
 		assertEquals("AP_HAL::HAL::Callbacks", s.getParentNamespace().getName(true));
 
 		assertEquals("typeinfo name for AP_HAL::HAL::Callbacks",
-			program.getListing().getComment(CodeUnit.PLATE_COMMENT, addr("01001000")));
+			program.getListing().getComment(CommentType.PLATE, addr("01001000")));
 
 		Data d = program.getListing().getDefinedDataAt(addr("01001000"));
 		assertNotNull(d);

@@ -17,6 +17,7 @@ package ghidra.app.plugin.core.debug.gui.action;
 
 import java.lang.invoke.MethodHandles;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
 import docking.ActionContext;
@@ -28,9 +29,10 @@ import docking.menu.MultiStateDockingAction;
 import docking.widgets.EventTrigger;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources.AbstractRefreshSelectedMemoryAction;
-import ghidra.app.plugin.core.debug.gui.action.AutoReadMemorySpec.AutoReadMemorySpecConfigFieldCodec;
 import ghidra.app.plugin.core.debug.gui.control.TargetActionTask;
 import ghidra.app.util.viewer.listingpanel.AddressSetDisplayListener;
+import ghidra.debug.api.action.AutoReadMemorySpec;
+import ghidra.debug.api.action.AutoReadMemorySpec.AutoReadMemorySpecConfigFieldCodec;
 import ghidra.debug.api.target.Target;
 import ghidra.debug.api.tracemgr.DebuggerCoordinates;
 import ghidra.framework.model.DomainObjectChangeRecord;
@@ -38,6 +40,7 @@ import ghidra.framework.model.DomainObjectEvent;
 import ghidra.framework.options.SaveState;
 import ghidra.framework.plugintool.*;
 import ghidra.framework.plugintool.annotation.AutoConfigStateField;
+import ghidra.lifecycle.Internal;
 import ghidra.program.model.address.*;
 import ghidra.trace.model.TraceAddressSnapRange;
 import ghidra.trace.model.TraceDomainObjectListener;
@@ -147,8 +150,7 @@ public abstract class DebuggerReadsMemoryTrait {
 	protected MultiStateDockingAction<AutoReadMemorySpec> actionAutoRead;
 	protected RefreshSelectedMemoryAction actionRefreshSelected;
 
-	private final AutoReadMemorySpec defaultAutoSpec =
-		AutoReadMemorySpec.fromConfigName(VisibleROOnceAutoReadMemorySpec.CONFIG_NAME);
+	private final AutoReadMemorySpec defaultAutoSpec = BasicAutoReadMemorySpec.VIS_RO_ONCE;
 
 	@AutoConfigStateField(codec = AutoReadMemorySpecConfigFieldCodec.class)
 	protected AutoReadMemorySpec autoSpec = defaultAutoSpec;
@@ -163,6 +165,9 @@ public abstract class DebuggerReadsMemoryTrait {
 
 	protected DebuggerCoordinates current = DebuggerCoordinates.NOWHERE;
 	protected AddressSetView visible;
+
+	protected final Object lock = new Object();
+	protected volatile CompletableFuture<?> lastRead;
 
 	public DebuggerReadsMemoryTrait(PluginTool tool, Plugin plugin, ComponentProvider provider) {
 		this.tool = tool;
@@ -205,6 +210,9 @@ public abstract class DebuggerReadsMemoryTrait {
 			removeOldTraceListener();
 		}
 		current = coordinates;
+		if (actionRefreshSelected != null) {
+			actionRefreshSelected.updateEnabled(null);
+		}
 		if (doTraceListener) {
 			addNewTraceListener();
 		}
@@ -228,14 +236,20 @@ public abstract class DebuggerReadsMemoryTrait {
 			return;
 		}
 		AddressSet visible = new AddressSet(this.visible);
-		autoSpec.getEffective(current).readMemory(tool, current, visible).thenAccept(b -> {
-			if (b) {
-				memoryWasRead(visible);
-			}
-		}).exceptionally(ex -> {
-			Msg.error(this, "Could not auto-read memory: " + ex);
-			return null;
-		});
+
+		synchronized (lock) {
+			lastRead = autoSpec.getEffective(current)
+					.readMemory(tool, current, visible)
+					.thenAccept(b -> {
+						if (b) {
+							memoryWasRead(visible);
+						}
+					})
+					.exceptionally(ex -> {
+						Msg.error(this, "Could not auto-read memory: " + ex);
+						return null;
+					});
+		}
 	}
 
 	public MultiStateDockingAction<AutoReadMemorySpec> installAutoReadAction() {
@@ -296,8 +310,17 @@ public abstract class DebuggerReadsMemoryTrait {
 	}
 
 	/* testing */
+	@Internal
 	public AddressSetView getVisible() {
 		return visible;
+	}
+
+	/* testing */
+	@Internal
+	public CompletableFuture<?> getLastRead() {
+		synchronized (lock) {
+			return lastRead;
+		}
 	}
 
 	protected abstract AddressSetView getSelection();

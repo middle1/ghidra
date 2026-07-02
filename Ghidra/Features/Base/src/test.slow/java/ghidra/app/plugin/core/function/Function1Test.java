@@ -52,6 +52,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.data.*;
 import ghidra.program.model.listing.*;
+import ghidra.program.model.listing.Function.FunctionUpdateType;
 import ghidra.program.model.symbol.*;
 import ghidra.program.util.ProgramSelection;
 import ghidra.test.*;
@@ -1286,9 +1287,19 @@ public class Function1Test extends AbstractGhidraHeadedIntegrationTest {
 		env.showTool();
 		loadProgram("notepad");
 		Function f = createFunctionAtEntry();
+		// Test requires a size-constrained register variable edit 
+		program.withTransaction("Update Signature",
+			() -> f.updateFunction(null, null, FunctionUpdateType.CUSTOM_STORAGE, true,
+				SourceType.ANALYSIS, new ParameterImpl("test", Undefined4DataType.dataType,
+					program.getRegister("EBX"), program)));
 		setCustomParameterStorage(f, true);
 
-		assertTrue(cb.goToField(addr("0x1006420"), "Variable Type", 0, 0));
+		waitForSwing();
+
+		// Set location to param_1 datatype field
+		assertTrue(cb.goToField(addr("0x1006420"), "Variable Type", 1, 0, 0));
+
+		waitForSwing();
 
 		performAction(chooseDataType, cb.getProvider(), false);
 		DataTypeSelectionDialog dialog = waitForDialogComponent(DataTypeSelectionDialog.class);

@@ -15,10 +15,10 @@
  */
 package docking.actions;
 
-import docking.DialogComponentProvider;
-import docking.Tool;
+import docking.*;
 import docking.action.DockingActionIf;
 import docking.tool.ToolConstants;
+import docking.widgets.filechooser.GhidraFileChooser;
 import docking.widgets.table.GTable;
 import docking.widgets.tree.GTree;
 
@@ -37,9 +37,11 @@ public class SharedActionRegistry {
 	 */
 	public static void installSharedActions(Tool tool, ToolActions toolActions) {
 		GTable.createSharedActions(tool, toolActions, ToolConstants.SHARED_OWNER);
-
 		GTree.createSharedActions(tool, toolActions, ToolConstants.SHARED_OWNER);
 
 		DialogComponentProvider.createSharedActions(tool, toolActions, ToolConstants.SHARED_OWNER);
+		DockingWindowManager.createSharedActions(tool, toolActions, ToolConstants.SHARED_OWNER);
+
+		GhidraFileChooser.registerSharedActions(tool, toolActions);
 	}
 }
